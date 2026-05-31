@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Applicants for: {{ job_title }}</h2>
+    
+    {% if interested %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Course</th>
+                        <th>Faculty</th>
+                        <th>GPA</th>
+                        <th>Current Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in interested %}
+                    <tr>
+                        <td>{{ s.name }}</td>
+                        <td>{{ s.email }}</td>
+                        <td>{{ s.course }}</td>
+                        <td>{{ s.faculty }}</td>
+                        <td>{{ s.gpa }}</td>
+                        <td>
+                            <span class="badge 
+                                {% if s.status == 'accepted' %}bg-success
+                                {% elif s.status == 'rejected' %}bg-danger
+                                {% elif s.status == 'shortlisted' %}bg-info
+                                {% else %}bg-warning text-dark{% endif %}">
+                                {{ s.status|capitalize if s.status else 'Pending' }}
+                            </span>
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#statusModal{{ loop.index }}">
+                                Update Status
+                            </button>
+                            <!-- Modal -->
+                            <div class="modal fade" id="statusModal{{ loop.index }}" tabindex="-1">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">Update Application Status</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <form method="POST" action="{{ url_for('update_application_status', application_id=s.application_id) }}">
+                                            <div class="modal-body">
+                                                <div class="mb-3">
+                                                    <label class="form-label">Status</label>
+                                                    <select name="status" class="form-select" required>
+                                                        <option value="pending" {% if s.status == 'pending' %}selected{% endif %}>Pending</option>
+                                                        <option value="shortlisted" {% if s.status == 'shortlisted' %}selected{% endif %}>Shortlisted</option>
+                                                        <option value="accepted" {% if s.status == 'accepted' %}selected{% endif %}>Accept</option>
+                                                        <option value="rejected" {% if s.status == 'rejected' %}selected{% endif %}>Reject</option>
+                                                    </select>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Feedback (optional)</label>
+                                                    <textarea name="feedback" class="form-control" rows="3" placeholder="Add any comments for the student...">{{ s.feedback or '' }}</textarea>
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-primary">Update Status</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="text-muted">No students have shown interest yet.</p>
+    {% endif %}
+
+    <a href="{{ url_for('recruiter_dashboard') }}" class="btn btn-secondary">Back to My Jobs</a>
+</div>
+{% endblock %}

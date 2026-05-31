@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Register{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white text-center">
+                <h4 class="mb-0">Create an Account</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('register') }}">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Full Name</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email Address</label>
+                        <input type="email" class="form-control" id="email" name="email" required>
+                    </div>
+                    <!-- Phone moved to profile editing: users can add phone in Edit Profile -->
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="role" class="form-label">I am a:</label>
+                        <select class="form-select" id="role" name="role" required>
+                            <option value="">Select role</option>
+                            <option value="student">Student / Alumni</option>
+                            <option value="recruiter">Recruiter (Company)</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Student Fields -->
+                    <div id="studentFields" style="display: none;">
+                        <div class="mb-3">
+                            <label for="student_id" class="form-label">Student Number</label>
+                            <input type="text" class="form-control" id="student_id" name="student_id" placeholder="901015057" pattern="\d{9}" maxlength="9">
+                            <div class="form-text">Must contain exactly 9 digits, no letters or spaces.</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Recruiter Fields -->
+                    <div id="recruiterFields" style="display: none;">
+                        <div class="mb-3">
+                            <label for="company_name" class="form-label">Company Name</label>
+                            <input type="text" class="form-control" id="company_name" name="company_name" placeholder="e.g., Tech Solutions Ltd">
+                        </div>
+                        <div class="mb-3">
+                            <label for="company_website" class="form-label">Company Website URL</label>
+                            <input type="url" class="form-control" id="company_website" name="company_website" placeholder="https://www.yourcompany.com">
+                            <div class="form-text">Required for recruiters. The system will auto-fetch company metadata from this URL.</div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary w-100">Register</button>
+                </form>
+                <div class="text-center mt-3">
+                    <small>Already have an account? <a href="{{ url_for('login') }}">Login here</a></small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const roleSelect = document.getElementById('role');
+    const studentDiv = document.getElementById('studentFields');
+    const recruiterDiv = document.getElementById('recruiterFields');
+
+    roleSelect.addEventListener('change', function() {
+        if (this.value === 'student') {
+            studentDiv.style.display = 'block';
+            recruiterDiv.style.display = 'none';
+            // Make student_id required
+            document.getElementById('student_id').required = true;
+            document.getElementById('company_name').required = false;
+            document.getElementById('company_website').required = false;
+        } else if (this.value === 'recruiter') {
+            studentDiv.style.display = 'none';
+            recruiterDiv.style.display = 'block';
+            // Make company_name and website required
+            document.getElementById('student_id').required = false;
+            document.getElementById('company_name').required = true;
+            document.getElementById('company_website').required = true;
+        } else {
+            studentDiv.style.display = 'none';
+            recruiterDiv.style.display = 'none';
+            document.getElementById('student_id').required = false;
+            document.getElementById('company_name').required = false;
+            document.getElementById('company_website').required = false;
+        }
+    });
+</script>
+{% endblock %}

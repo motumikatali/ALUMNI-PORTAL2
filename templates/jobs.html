@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Available Jobs & Internships{% endblock %}
+
+{% block content %}
+<div class="hero-section text-center">
+    <div class="container">
+        <h1 class="display-4 fw-bold">📢 Available Opportunities</h1>
+        <p class="lead">Discover internships and jobs that match your skills</p>
+    </div>
+</div>
+
+<div class="container">
+    <!-- Filter section -->
+    <div class="filter-section">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-8">
+                <label class="form-label fw-semibold">🔍 Search by title or company</label>
+                <input type="text" id="searchInput" class="form-control" placeholder="e.g., Software Engineer or Tech Corp">
+            </div>
+            <div class="col-md-4">
+                <button class="btn btn-outline-custom w-100" onclick="resetFilters()">
+                    <i class="fas fa-undo-alt"></i> Reset Filters
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Jobs Grid -->
+    <div class="row" id="jobsGrid">
+        {% for job in jobs %}
+        <div class="col-md-6 col-lg-4 mb-4 job-item"
+             data-title="{{ job.title|lower }}"
+             data-company="{{ job.company|lower }}">
+            <div class="job-card h-100">
+                <div class="job-header">
+                    <div class="job-icon">
+                        <i class="fas fa-briefcase"></i>
+                    </div>
+                    <h5 class="job-title">{{ job.title }}</h5>
+                </div>
+                <div class="job-body">
+                    <div class="company-name">
+                        <i class="fas fa-building me-1"></i>
+                        <a href="{{ url_for('company_profile', company_id=job.company_id) }}" class="text-decoration-none text-dark">{{ job.company }}</a>
+                    </div>
+                    {% if job.location %}
+                    <div class="job-meta">
+                        <i class="fas fa-map-marker-alt"></i> {{ job.location }}
+                    </div>
+                    {% endif %}
+                    {% if job.salary %}
+                    <div class="job-meta">
+                        <i class="fas fa-money-bill-wave"></i> {{ job.salary }}
+                    </div>
+                    {% endif %}
+                    <div class="job-description">
+                        {{ job.description[:120] }}{% if job.description|length > 120 %}...{% endif %}
+                    </div>
+                    <div class="text-center mt-3">
+                        <a href="{{ url_for('job_detail', job_id=job.id) }}" class="btn-view">
+                            View Details <i class="fas fa-arrow-right ms-1"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="col-12 text-center py-5">
+            <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+            <p class="text-muted">No job opportunities available at the moment. Check back later!</p>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- No results message (hidden by default) -->
+    <div id="noResults" class="text-center py-5" style="display: none;">
+        <i class="fas fa-search fa-3x text-muted mb-3"></i>
+        <h4>No matching jobs found</h4>
+        <p class="text-muted">Try adjusting your search terms.</p>
+    </div>
+</div>
+
+<script>
+    function filterJobs() {
+        const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+        const items = document.querySelectorAll('.job-item');
+        let visible = 0;
+        items.forEach(item => {
+            const title = item.dataset.title;
+            const company = item.dataset.company;
+            const matches = title.includes(searchTerm) || company.includes(searchTerm);
+            if (matches) {
+                item.style.display = 'block';
+                visible++;
+            } else {
+                item.style.display = 'none';
+            }
+        });
+        document.getElementById('noResults').style.display = visible === 0 ? 'block' : 'none';
+    }
+
+    function resetFilters() {
+        document.getElementById('searchInput').value = '';
+        filterJobs();
+    }
+
+    document.getElementById('searchInput').addEventListener('keyup', filterJobs);
+    filterJobs();
+</script>
+{% endblock %}

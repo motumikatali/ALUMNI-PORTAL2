@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Forwarded Chats - Admin{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-lg-10 mx-auto">
+            <h2><i class="fas fa-envelope-open-text"></i> Forwarded Chats from AI Assistant</h2>
+            <p class="text-muted">Users who have been escalated from the AI Assistant</p>
+
+            {% if chats %}
+                <div class="row g-4">
+                    {% for chat in chats %}
+                        <div class="col-md-6">
+                            <div class="card shadow">
+                                <div class="card-header {% if chat['status'] == 'pending' %}bg-warning{% else %}bg-success{% endif %} text-white">
+                                    <h6 class="mb-0">
+                                        <i class="fas fa-user"></i> {{ chat['name'] }}
+                                    </h6>
+                                    <small>{{ chat['email'] }}</small>
+                                </div>
+
+                                <div class="card-body">
+                                    <h6>Original Question:</h6>
+                                    <p class="text-muted">
+                                        <em>{{ chat['original_question'][:100] }}{% if chat['original_question']|length > 100 %}...{% endif %}</em>
+                                    </p>
+
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span class="badge {% if chat['status'] == 'pending' %}bg-warning text-dark{% else %}bg-success{% endif %}">
+                                            {{ chat['status']|upper }}
+                                        </span>
+                                        <small class="text-muted">{{ chat['created_at'] }}</small>
+                                    </div>
+                                </div>
+
+                                <div class="card-footer">
+                                    <a href="{{ url_for('admin_forwarded_chat_view', chat_id=chat['id']) }}" class="btn btn-primary btn-sm w-100">
+                                        <i class="fas fa-reply"></i> Reply to User
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="alert alert-info">
+                    <i class="fas fa-inbox"></i> No forwarded chats at this time.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

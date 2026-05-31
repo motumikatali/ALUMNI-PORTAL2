@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}Student Profiles{% endblock %}
+{% block extra_css %}
+<style>
+    .hero-section {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 60px 0;
+        margin-bottom: 40px;
+        border-radius: 0 0 20px 20px;
+    }
+    .student-card {
+        border: none;
+        border-radius: 15px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+        transition: transform 0.3s, box-shadow 0.3s;
+        overflow: hidden;
+        background: white;
+    }
+    .student-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 25px rgba(0,0,0,0.12);
+    }
+    .card-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 15px;
+        text-align: center;
+        position: relative;
+    }
+    .avatar {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: -40px auto 15px;
+        position: relative;
+        z-index: 2;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .avatar i {
+        font-size: 40px;
+        color: #667eea;
+    }
+    .card-body {
+        padding: 20px;
+    }
+    .student-info p {
+        margin-bottom: 8px;
+        font-size: 14px;
+    }
+    .student-info i {
+        width: 25px;
+        color: #667eea;
+    }
+    .skill-badge {
+        background: #e9ecef;
+        color: #495057;
+        border-radius: 20px;
+        padding: 4px 12px;
+        font-size: 12px;
+        margin-right: 5px;
+        margin-bottom: 5px;
+        display: inline-block;
+    }
+    .status-badge {
+        position: absolute;
+        top: 15px;
+        right: 15px;
+        font-size: 12px;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-weight: 500;
+    }
+    .status-seeking {
+        background: #ffc107;
+        color: #856404;
+    }
+    .status-employed {
+        background: #28a745;
+        color: white;
+    }
+    .status-internship {
+        background: #17a2b8;
+        color: white;
+    }
+    .filter-section {
+        background: white;
+        border-radius: 15px;
+        padding: 20px;
+        margin-bottom: 30px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .btn-outline-custom {
+        border-color: #667eea;
+        color: #667eea;
+    }
+    .btn-outline-custom:hover {
+        background: #667eea;
+        color: white;
+    }
+</style>
+{% endblock %}
+{% block content %}
+<div class="hero-section text-center">
+    <div class="container">
+        <h1 class="display-4 fw-bold">🌟 Student Profiles</h1>
+        <p class="lead">Discover talented students and alumni ready to contribute to your organization</p>
+    </div>
+</div>
+
+<div class="container">
+    <!-- Search & Filter -->
+    <div class="filter-section">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-5">
+                <label class="form-label fw-semibold">🔍 Search by name or course</label>
+                <input type="text" id="searchInput" class="form-control" placeholder="e.g., Computer Science or John">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">📊 Filter by status</label>
+                <select id="statusFilter" class="form-select">
+                    <option value="all">All Students</option>
+                    <option value="Seeking Internship">Seeking Internship</option>
+                    <option value="Employed">Employed</option>
+                    <option value="Not Seeking">Not Seeking</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-outline-custom w-100" onclick="resetFilters()">
+                    <i class="fas fa-undo-alt"></i> Reset Filters
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Students Grid -->
+    <div class="row" id="studentsGrid">
+        {% for s in students %}
+        <div class="col-md-6 col-lg-4 mb-4 student-item" 
+             data-name="{{ s.name|lower }}" 
+             data-course="{{ s.course|lower }}" 
+             data-status="{{ s.internship_status }}">
+            <div class="student-card h-100">
+                <div class="card-header">
+                    <span class="status-badge 
+                        {% if s.internship_status == 'Seeking Internship' %}status-seeking
+                        {% elif s.internship_status == 'Employed' %}status-employed
+                        {% else %}status-internship{% endif %}">
+                        {{ s.internship_status }}
+                    </span>
+                    <div class="avatar">
+                        <i class="fas fa-user-graduate"></i>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <h5 class="card-title text-center mb-3">{{ s.name }}</h5>
+                    <div class="student-info">
+                        <p><i class="fas fa-graduation-cap"></i> <strong>{{ s.course }}</strong></p>
+                        <p><i class="fas fa-chart-line"></i> GPA: {{ s.gpa }}</p>
+                        <p><i class="fas fa-calendar-alt"></i> Class of {{ s.graduation_year }}</p>
+                        <p>
+                            <i class="fas fa-code"></i> Skills:
+                            {% if s.skills %}
+                                {% set skill_list = s.skills.split(',') if s.skills is string else s.skills %}
+                                {% for skill in skill_list %}
+                                    <span class="skill-badge">{{ skill.strip() }}</span>
+                                {% endfor %}
+                            {% else %}
+                                <span class="text-muted">Not specified</span>
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div class="text-center mt-3">
+                        <a href="{{ url_for('student_detail', user_id=s.user_id) }}" class="btn btn-sm btn-primary">
+                            View Profile <i class="fas fa-arrow-right"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- No results message -->
+    <div id="noResults" class="text-center py-5" style="display: none;">
+        <i class="fas fa-users-slash fa-3x text-muted mb-3"></i>
+        <h4>No students found</h4>
+        <p class="text-muted">Try adjusting your search or filter criteria.</p>
+    </div>
+</div>
+
+<script>
+    function filterStudents() {
+        const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+        const statusFilter = document.getElementById('statusFilter').value;
+        const students = document.querySelectorAll('.student-item');
+        let visibleCount = 0;
+        students.forEach(student => {
+            const name = student.dataset.name;
+            const course = student.dataset.course;
+            const status = student.dataset.status;
+            const matchesSearch = name.includes(searchTerm) || course.includes(searchTerm);
+            const matchesStatus = statusFilter === 'all' || status === statusFilter;
+            if (matchesSearch && matchesStatus) {
+                student.style.display = 'block';
+                visibleCount++;
+            } else {
+                student.style.display = 'none';
+            }
+        });
+        document.getElementById('noResults').style.display = visibleCount === 0 ? 'block' : 'none';
+    }
+
+    function resetFilters() {
+        document.getElementById('searchInput').value = '';
+        document.getElementById('statusFilter').value = 'all';
+        filterStudents();
+    }
+
+    document.getElementById('searchInput').addEventListener('keyup', filterStudents);
+    document.getElementById('statusFilter').addEventListener('change', filterStudents);
+    filterStudents();
+</script>
+{% endblock %}

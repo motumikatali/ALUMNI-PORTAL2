@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Post a Mentorship Program{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow admin-card">
+                <div class="card-header bg-primary">
+                    <h4 class="mb-0"><i class="fas fa-chalkboard-user me-2"></i> Post a Mentorship Program</h4>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Program Title</label>
+                            <input type="text" name="title" class="form-control" placeholder="e.g., Python Mentorship for Beginners" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Description</label>
+                            <textarea name="description" class="form-control" rows="4" placeholder="What will the mentee learn? What topics will be covered?"></textarea>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-bold">Duration</label>
+                                <input type="text" name="duration" class="form-control" placeholder="e.g., 3 months, 6 weeks">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-bold">Skills Needed</label>
+                                <input type="text" name="skills_needed" class="form-control" placeholder="e.g., Python, Leadership, Communication">
+                            </div>
+                        </div>
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i> This mentorship program will be visible to all students and alumni on the platform.
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-lg w-100">
+                            <i class="fas fa-paper-plane me-2"></i> Post Mentorship Program
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

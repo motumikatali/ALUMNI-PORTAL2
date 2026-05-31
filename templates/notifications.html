@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Notifications{% endblock %}
+
+{% block content %}
+<div class="container" style="margin-top: 30px;">
+    <div class="card">
+        <div class="card-header">
+            <h4>Notifications</h4>
+            <p class="text-muted mb-0">Your latest alerts and updates.</p>
+        </div>
+        <div class="card-body">
+            <div id="notificationsPageList" class="list-group">
+                <div class="list-group-item text-center text-muted">Loading notifications...</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function loadPageNotifications() {
+    fetch('/api/notifications')
+        .then(res => res.json())
+        .then(notifications => {
+            var list = document.getElementById('notificationsPageList');
+            if (!list) return;
+            if (!notifications || notifications.length === 0) {
+                list.innerHTML = '<div class="list-group-item text-center text-muted">No new notifications</div>';
+                return;
+            }
+            list.innerHTML = notifications.map(n => `
+                <a href="${n.link}" class="list-group-item list-group-item-action">
+                    <div class="d-flex w-100 justify-content-between">
+                        <h5 class="mb-1">${n.title}</h5>
+                        <small>${new Date(n.created_at).toLocaleString()}</small>
+                    </div>
+                    <p class="mb-1">${n.message}</p>
+                </a>
+            `).join('');
+        })
+        .catch(() => {
+            var list = document.getElementById('notificationsPageList');
+            if (list) list.innerHTML = '<div class="list-group-item text-center text-danger">Unable to load notifications.</div>';
+        });
+}
+
+loadPageNotifications();
+</script>
+{% endblock %}

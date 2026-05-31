@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Job Details - {{ job.title }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="job-detail-card">
+        <!-- Header -->
+        <div class="job-header">
+            <h4><i class="fas fa-briefcase me-2"></i> {{ job.title }}</h4>
+            <div class="company">
+                <i class="fas fa-building me-1"></i>
+                <a href="{{ url_for('company_profile', company_id=job.company_id) }}" class="text-decoration-none text-dark">{{ job.company_name }}</a>
+                <span class="ms-3">
+                    <i class="fas fa-user me-1"></i> Posted by {{ job.recruiter_name }}
+                </span>
+            </div>
+        </div>
+
+        <!-- Job Information -->
+        <div class="job-detail-section">
+            <div class="info-row">
+                <div class="info-icon"><i class="fas fa-map-marker-alt"></i></div>
+                <div class="info-label">Location</div>
+                <div class="info-value">{{ job.location or 'Not specified' }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-icon"><i class="fas fa-money-bill-wave"></i></div>
+                <div class="info-label">Salary</div>
+                <div class="info-value">{{ job.salary or 'Negotiable' }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-icon"><i class="fas fa-tag"></i></div>
+                <div class="info-label">Status</div>
+                <div class="info-value">
+                    <span class="badge {% if job.status == 'approved' %}bg-success{% else %}bg-warning text-dark{% endif %}">
+                        {{ job.status|capitalize }}
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Description -->
+        <div class="job-detail-section">
+            <div class="info-row">
+                <div class="info-icon"><i class="fas fa-align-left"></i></div>
+                <div class="info-label">Description</div>
+            </div>
+            <div class="description-text">
+                {{ job.description or 'No description provided.' }}
+            </div>
+        </div>
+
+        {% if job.website_description or job.industry or job.logo_url or job.social_links %}
+        <div class="job-detail-section">
+            <div class="info-row">
+                <div class="info-icon"><i class="fas fa-building"></i></div>
+                <div class="info-label">Company Profile</div>
+            </div>
+            <div class="description-text">
+                {% if job.website_description %}
+                    <p>{{ job.website_description }}</p>
+                {% endif %}
+                {% if job.industry %}
+                    <p><strong>Industry:</strong> {{ job.industry }}</p>
+                {% endif %}
+                {% if job.logo_url %}
+                    <p><strong>Logo:</strong> <a href="{{ job.logo_url }}" target="_blank">View logo</a></p>
+                {% endif %}
+                {% if job.social_links %}
+                    <p><strong>Social Links:</strong>
+                        {% for link in job.social_links.split(',') if link %}
+                            <a href="{{ link.strip() }}" target="_blank">{{ link.strip() }}</a>{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                    </p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Action Buttons -->
+        <div class="footer-buttons">
+            <a href="{{ url_for('dashboard') if session.role in ['student','alumni'] else url_for('home') }}" 
+               class="btn btn-secondary">
+                <i class="fas fa-arrow-left me-1"></i> Back to Dashboard
+            </a>
+            {% if session.role in ['student', 'alumni'] %}
+                {% if already_interested %}
+                    <button class="btn btn-success ms-2" disabled>
+                        <i class="fas fa-check-circle me-1"></i> Already Applied
+                    </button>
+                {% else %}
+                    <form method="POST" action="{{ url_for('mark_interest', job_id=job.id) }}" style="display: inline;">
+                        <button type="submit" class="btn btn-primary ms-2">
+                            <i class="fas fa-paper-plane me-1"></i> Apply Now
+                        </button>
+                    </form>
+                {% endif %}
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

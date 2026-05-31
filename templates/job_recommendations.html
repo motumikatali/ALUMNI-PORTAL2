@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Job Recommendations{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-10">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0"><i class="fas fa-chart-line me-2"></i> Recommended Candidates</h4>
+                    <p class="mb-0 small text-white-75">Automatically generated candidate matches for the job "{{ job.title }}".</p>
+                </div>
+                <div class="card-body">
+                    <div class="mb-4">
+                        <h5 class="mb-2">Job summary</h5>
+                        <p class="mb-1"><strong>Location:</strong> {{ job.location or 'Not specified' }}</p>
+                        <p class="mb-1"><strong>Skills required:</strong> {{ job.skills_required or 'Not specified' }}</p>
+                        <p class="mb-1"><strong>Requirements:</strong> {{ job.requirements or 'Not specified' }}</p>
+                        <p class="mb-0"><strong>Status:</strong> {{ job.status or 'pending' }}</p>
+                    </div>
+
+                    {% if recommendations %}
+                        <div class="list-group">
+                            {% for rec in recommendations %}
+                            <div class="list-group-item mb-3 p-3 rounded border">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h5 class="mb-1">{{ rec.name }}</h5>
+                                        <p class="mb-1 small text-muted">{{ rec.course or 'Course not set' }} · {{ rec.faculty or 'Faculty not set' }}</p>
+                                        <p class="mb-1 small">Skills: {{ rec.skills or 'Not listed' }}</p>
+                                        <p class="mb-1 small">GPA: {{ rec.gpa or 'N/A' }} · Status: {{ rec.internship_status or 'N/A' }}</p>
+                                    </div>
+                                    <div class="text-end">
+                                        <span class="badge bg-success">Score: {{ '%.2f'|format(rec.score) }}</span>
+                                        <a href="mailto:{{ rec.email or '' }}" class="btn btn-sm btn-outline-primary d-block mt-2">Message</a>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="text-center py-5">
+                            <i class="fas fa-search fa-3x text-muted mb-3"></i>
+                            <p class="text-muted">No candidate recommendations are available yet.</p>
+                            <p class="small">Try posting a more detailed job description or skills list to improve matching.</p>
+                        </div>
+                    {% endif %}
+                    <div class="mt-4">
+                        <a href="{{ url_for('recruiter_dashboard') }}" class="btn btn-secondary"><i class="fas fa-arrow-left me-1"></i> Back to Dashboard</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

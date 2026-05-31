@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card shadow-lg">
+    <div class="card-header bg-primary text-white">
+        <h4>{{ student.name }}&#39;s Projects</h4>
+    </div>
+    <div class="card-body">
+        <p><strong>Course:</strong> {{ student.course }}</p>
+        <p><strong>Faculty:</strong> {{ student.faculty }}</p>
+        {% if projects %}
+            <div class="list-group">
+                {% for project in projects %}
+                    <div class="list-group-item mb-3 p-3 border rounded">
+                        <h5 class="mb-2">{{ project.title }}</h5>
+                        <p>{{ project.description or 'No description provided.' }}</p>
+                        {% if project.link %}
+                            <p><a href="{{ project.link }}" target="_blank">Project link</a></p>
+                        {% endif %}
+                        <small class="text-muted">Submitted {{ project.created_at }}</small>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="text-muted">No projects have been added yet.</p>
+        {% endif %}
+        <a href="{{ url_for('student_detail', user_id=student.id) }}" class="btn btn-secondary mt-3">Back to Profile</a>
+    </div>
+</div>
+{% endblock %}

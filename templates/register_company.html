@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+
+{% block title %}{% if existing_company %}Edit Company{% else %}Register Your Company{% endif %}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0">
+                        {% if existing_company %}
+                            <i class="fas fa-edit"></i> Edit Your Company Profile
+                        {% else %}
+                            <i class="fas fa-building"></i> Register Your Company
+                        {% endif %}
+                    </h4>
+                </div>
+
+                <div class="card-body">
+                    {% if existing_company %}
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i> 
+                            You already have a company profile. Make changes below to update it.
+                        </div>
+                    {% else %}
+                        <p class="text-muted mb-4">
+                            Create a company profile to be visible to students and alumni. 
+                            We'll automatically fetch information from your website and social links.
+                        </p>
+                    {% endif %}
+
+                    <form method="POST" enctype="multipart/form-data">
+                        <!-- Company Name -->
+                        <div class="mb-3">
+                            <label class="form-label" for="name">
+                                <i class="fas fa-briefcase"></i> Company Name <span class="text-danger">*</span>
+                            </label>
+                            <input 
+                                type="text" 
+                                class="form-control" 
+                                id="name" 
+                                name="name" 
+                                placeholder="Your company name" 
+                                required
+                                value="{{ existing_company.get('name') if existing_company else '' }}"
+                            >
+                        </div>
+
+                        <!-- Description -->
+                        <div class="mb-3">
+                            <label class="form-label" for="description">
+                                <i class="fas fa-pen"></i> Company Description
+                            </label>
+                            <textarea 
+                                class="form-control" 
+                                id="description" 
+                                name="description" 
+                                rows="4" 
+                                placeholder="Tell us about your company, what you do, and your culture"
+                            >{{ existing_company.get('description') if existing_company else '' }}</textarea>
+                            <small class="text-muted">This will be displayed on your company profile</small>
+                        </div>
+
+                        <!-- Website URL -->
+                        <div class="mb-3">
+                            <label class="form-label" for="website_url">
+                                <i class="fas fa-globe"></i> Website URL <span class="text-danger">*</span>
+                            </label>
+                            <input 
+                                type="url" 
+                                class="form-control" 
+                                id="website_url" 
+                                name="website_url" 
+                                placeholder="https://www.yourcompany.com" 
+                                required
+                                value="{{ existing_company.get('website_url') if existing_company else '' }}"
+                            >
+                            <small class="text-muted">We'll fetch your company info, logo, and description from here</small>
+                        </div>
+
+                        <!-- LinkedIn URL -->
+                        <div class="mb-3">
+                            <label class="form-label" for="linkedin_url">
+                                <i class="fab fa-linkedin"></i> LinkedIn Company Page URL
+                            </label>
+                            <input 
+                                type="url" 
+                                class="form-control" 
+                                id="linkedin_url" 
+                                name="linkedin_url" 
+                                placeholder="https://www.linkedin.com/company/yourcompany" 
+                                value="{{ existing_company.get('linkedin_url') if existing_company else '' }}"
+                            >
+                            <small class="text-muted">Optional - We'll fetch additional company info from LinkedIn</small>
+                        </div>
+
+                        <!-- Logo URL -->
+                        <div class="mb-3">
+                            <label class="form-label" for="logo_url">
+                                <i class="fas fa-image"></i> Logo URL
+                            </label>
+                            <input 
+                                type="url" 
+                                class="form-control" 
+                                id="logo_url" 
+                                name="logo_url" 
+                                placeholder="https://www.yourcompany.com/logo.png" 
+                                value="{{ existing_company.get('logo_url') if existing_company else '' }}"
+                            >
+                            <small class="text-muted">Direct URL to your company logo (PNG or JPG)</small>
+                        </div>
+
+                        <!-- Industry -->
+                        <div class="mb-3">
+                            <label class="form-label" for="industry">
+                                <i class="fas fa-industry"></i> Industry
+                            </label>
+                            <select class="form-select" id="industry" name="industry">
+                                <option value="">Select Industry (Optional)</option>
+                                <option value="Technology" {% if existing_company and existing_company.get('industry') == 'Technology' %}selected{% endif %}>Technology</option>
+                                <option value="Finance" {% if existing_company and existing_company.get('industry') == 'Finance' %}selected{% endif %}>Finance</option>
+                                <option value="Healthcare" {% if existing_company and existing_company.get('industry') == 'Healthcare' %}selected{% endif %}>Healthcare</option>
+                                <option value="Education" {% if existing_company and existing_company.get('industry') == 'Education' %}selected{% endif %}>Education</option>
+                                <option value="Manufacturing" {% if existing_company and existing_company.get('industry') == 'Manufacturing' %}selected{% endif %}>Manufacturing</option>
+                                <option value="Consulting" {% if existing_company and existing_company.get('industry') == 'Consulting' %}selected{% endif %}>Consulting</option>
+                                <option value="Marketing" {% if existing_company and existing_company.get('industry') == 'Marketing' %}selected{% endif %}>Marketing</option>
+                                <option value="Logistics" {% if existing_company and existing_company.get('industry') == 'Logistics' %}selected{% endif %}>Logistics</option>
+                                <option value="Other" {% if existing_company and existing_company.get('industry') == 'Other' %}selected{% endif %}>Other</option>
+                            </select>
+                        </div>
+
+                        <!-- Location -->
+                        <div class="mb-3">
+                            <label class="form-label" for="location">
+                                <i class="fas fa-map-marker-alt"></i> Location
+                            </label>
+                            <input 
+                                type="text" 
+                                class="form-control" 
+                                id="location" 
+                                name="location" 
+                                placeholder="City, Country" 
+                                value="{{ existing_company.get('location') if existing_company else '' }}"
+                            >
+                        </div>
+
+                        <!-- Buttons -->
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> 
+                                {% if existing_company %}
+                                    Update Profile
+                                {% else %}
+                                    Register Company
+                                {% endif %}
+                            </button>
+                            <a href="{{ url_for('view_companies') }}" class="btn btn-secondary">
+                                <i class="fas fa-times"></i> Cancel
+                            </a>
+                        </div>
+                    </form>
+
+                    <!-- Info Box -->
+                    <div class="alert alert-info mt-4">
+                        <h6><i class="fas fa-lightbulb"></i> How This Works</h6>
+                        <ol class="mb-0">
+                            <li>Fill in your company information</li>
+                            <li>We automatically fetch data from your website and social links</li>
+                            <li>Your company profile appears in the company directory</li>
+                            <li>Students and alumni can view your profile and find job opportunities</li>
+                            <li>You can update your profile anytime</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

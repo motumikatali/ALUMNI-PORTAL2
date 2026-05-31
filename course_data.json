@@ -1,0 +1,166 @@
+{
+  "Software Engineering": {
+    "faculty": "Faculty of Information and Communication Technology",
+    "semesters": {
+      "1": [
+        "Introduction to Programming",
+        "Mathematics for Computing",
+        "Computer Systems Fundamentals",
+        "Communication Skills"
+      ],
+      "2": [
+        "Data Structures and Algorithms",
+        "Object-Oriented Programming",
+        "Database Systems",
+        "Web Development Basics"
+      ],
+      "3": [
+        "Software Engineering Principles",
+        "Operating Systems",
+        "Human-Computer Interaction",
+        "Networks and Security"
+      ],
+      "4": [
+        "Mobile Application Development",
+        "Software Project Management",
+        "Artificial Intelligence",
+        "Software Testing and Quality Assurance"
+      ],
+      "5": [
+        "Cloud Computing",
+        "Enterprise Application Development",
+        "Data Analytics",
+        "Professional Practice"
+      ],
+      "6": [
+        "Capstone Project",
+        "Innovation and Entrepreneurship",
+        "Ethics in Technology",
+        "Emerging Technologies"
+      ]
+    }
+  },
+  "Business Administration": {
+    "faculty": "Faculty of Business and Globalization",
+    "semesters": {
+      "1": [
+        "Principles of Management",
+        "Business Mathematics",
+        "Introduction to Economics",
+        "Business Communication"
+      ],
+      "2": [
+        "Financial Accounting",
+        "Marketing Fundamentals",
+        "Organizational Behaviour",
+        "Business Law"
+      ],
+      "3": [
+        "Corporate Finance",
+        "Operations Management",
+        "Human Resource Management",
+        "Entrepreneurship"
+      ],
+      "4": [
+        "Strategic Management",
+        "Business Research Methods",
+        "International Business",
+        "Business Ethics"
+      ],
+      "5": [
+        "Project Management",
+        "Supply Chain Management",
+        "Digital Marketing",
+        "Leadership and Change"
+      ],
+      "6": [
+        "Capstone Project",
+        "Business Analytics",
+        "Innovation Management",
+        "Professional Practice"
+      ]
+    }
+  },
+  "Graphic Design": {
+    "faculty": "Faculty of Design and Innovation",
+    "semesters": {
+      "1": [
+        "Design Fundamentals",
+        "Digital Illustration",
+        "Visual Communication",
+        "Creative Thinking"
+      ],
+      "2": [
+        "Typography",
+        "Layout and Composition",
+        "Brand Identity Design",
+        "Digital Imaging"
+      ],
+      "3": [
+        "Web and Interface Design",
+        "Package Design",
+        "Photography for Designers",
+        "Design Research"
+      ],
+      "4": [
+        "Motion Graphics",
+        "Interactive Media",
+        "Portfolio Development",
+        "Design Entrepreneurship"
+      ],
+      "5": [
+        "User Experience Design",
+        "Advertising Design",
+        "Design Studio Practice",
+        "Professional Practice"
+      ],
+      "6": [
+        "Capstone Project",
+        "Design Leadership",
+        "Trends in Design",
+        "Industry Attachment"
+      ]
+    }
+  },
+  "Tourism Management": {
+    "faculty": "Faculty of Creativity in Tourism and Hospitality",
+    "semesters": {
+      "1": [
+        "Introduction to Tourism",
+        "Hospitality Service Essentials",
+        "Business Communication",
+        "Customer Experience Management"
+      ],
+      "2": [
+        "Tourism Marketing",
+        "Event Management",
+        "Financial Management for Tourism",
+        "Cultural Heritage Tourism"
+      ],
+      "3": [
+        "Tour Operations Management",
+        "Sustainable Tourism",
+        "Food and Beverage Management",
+        "Tour Guide Practice"
+      ],
+      "4": [
+        "Quality Management in Hospitality",
+        "Tourism Policy and Planning",
+        "Digital Tourism",
+        "Professional Practice"
+      ],
+      "5": [
+        "Strategic Hospitality Management",
+        "Revenue Management",
+        "Tourism Research Methods",
+        "Entrepreneurship in Tourism"
+      ],
+      "6": [
+        "Capstone Project",
+        "Tourism Innovation",
+        "Leadership in Hospitality",
+        "Industry Attachment"
+      ]
+    }
+  }
+}

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Company Dashboard{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-4 mb-4">
+        <div class="card admin-card h-100">
+            <div class="card-header bg-primary"><h5 class="mb-0"><i class="fas fa-building me-2"></i> Company Information</h5></div>
+            <div class="card-body">
+                <div class="info-item"><i class="fas fa-building me-2"></i><strong>Company Name:</strong> {{ recruiter.company_name or 'Not set' }}</div>
+                <div class="info-item mt-2"><i class="fas fa-globe me-2"></i><strong>Website:</strong> {% if recruiter.website %}<a href="{{ recruiter.website }}" target="_blank">{{ recruiter.website }}</a>{% else %}Not set{% endif %}</div>
+                {% if recruiter.website_title %}
+                    <div class="info-item mt-2"><i class="fas fa-heading me-2"></i><strong>Website Title:</strong> {{ recruiter.website_title }}</div>
+                {% endif %}
+                {% if recruiter.website_description %}
+                    <div class="info-item mt-2"><i class="fas fa-align-left me-2"></i><strong>Description:</strong> {{ recruiter.website_description }}</div>
+                {% endif %}
+                {% if recruiter.website_logo_url %}
+                    <div class="info-item mt-2"><i class="fas fa-image me-2"></i><strong>Logo:</strong> <a href="{{ recruiter.website_logo_url }}" target="_blank">View</a></div>
+                {% endif %}
+                <div class="info-item mt-2"><i class="fas fa-industry me-2"></i><strong>Industry:</strong> {{ recruiter.industry or 'Not set' }}</div>
+                <div class="info-item mt-2"><i class="fas fa-calendar-alt me-2"></i><strong>Last Scrape:</strong> {{ recruiter.last_scrape_at or 'Never' }}</div>
+                <div class="info-item mt-2"><i class="fas fa-chart-line me-2"></i><strong>Jobs Found:</strong> {{ recruiter.jobs_found_count or 0 }}</div>
+                <div class="info-item mt-2"><i class="fas fa-check-circle me-2"></i><strong>Verification Status:</strong> {% if recruiter.verified %}<span class="badge-approved">Approved</span>{% else %}<span class="badge-pending">Pending</span>{% endif %}</div>
+                {% if not recruiter.verified %}<div class="alert alert-warning mt-3"><i class="fas fa-hourglass-half me-2"></i> Your account is pending admin approval. You cannot post jobs until approved.</div>{% endif %}
+                
+                <a href="{{ url_for('post_job') }}" class="btn btn-primary w-100 mt-3 {% if not recruiter.verified %}disabled{% endif %}"><i class="fas fa-plus-circle me-1"></i> Post New Job</a>
+                <a href="{{ url_for('recruiter_alumni') }}" class="btn btn-outline-primary w-100 mt-2"><i class="fas fa-users me-1"></i> View All Alumni (by Faculty)</a>
+                <a href="#my-jobs" class="btn btn-outline-secondary w-100 mt-2"><i class="fas fa-briefcase me-1"></i> My Posted Jobs</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-8">
+        <div class="card admin-card" id="my-jobs">
+            <div class="card-header bg-primary"><h5 class="mb-0"><i class="fas fa-briefcase me-2"></i> My Job Postings</h5></div>
+            <div class="card-body p-0">
+                {% if jobs %}
+                <div class="table-responsive">
+                    <table class="table admin-table mb-0">
+                        <thead><tr><th>Title</th><th>Location</th><th>Status</th><th>Actions</th></tr></thead>
+                        <tbody>
+                            {% for job in jobs %}
+                            <tr>
+                                <td><strong>{{ job.title }}</strong>{% if job.is_filled %} <span class="badge badge-secondary">Filled</span>{% endif %}</td>
+                                <td>{{ job.location or '—' }}</td>
+                                <td>
+                                    {% if job.status == 'approved' %}<span class="badge-approved">Approved</span>
+                                    {% elif job.is_filled %}<span class="badge badge-secondary">Filled</span>
+                                    {% else %}<span class="badge-pending">Pending</span>{% endif %}
+                                </td>
+                                <td>
+                                    <div class="d-flex flex-wrap gap-1">
+                                        <a href="{{ url_for('edit_job', job_id=job.id) }}" class="btn btn-sm btn-outline-primary btn-sm-icon"><i class="fas fa-edit me-1"></i>Edit</a>
+                                        <a href="{{ url_for('job_interested_students', job_id=job.id) }}" class="btn btn-sm btn-primary btn-sm-icon"><i class="fas fa-users me-1"></i>Applicants</a>
+                                        <a href="{{ url_for('job_recommendations', job_id=job.id) }}" class="btn btn-sm btn-outline-secondary btn-sm-icon"><i class="fas fa-chart-line me-1"></i>Recommendations</a>
+                                        <form method="POST" action="{{ url_for('delete_job', job_id=job.id) }}" class="d-inline">
+                                            <button type="submit" class="btn btn-sm btn-danger btn-sm-icon" onclick="return confirm('Delete this job?');"><i class="fas fa-trash-alt me-1"></i>Delete</button>
+                                        </form>
+                                        {% if not job.is_filled %}
+                                            <form method="POST" action="{{ url_for('mark_job_filled', job_id=job.id) }}" class="d-inline">
+                                                <button type="submit" class="btn btn-sm btn-success btn-sm-icon"><i class="fas fa-check-circle me-1"></i>Mark Filled</button>
+                                            </form>
+                                        {% endif %}
+                                        {% if job.is_active %}
+                                            <form method="POST" action="{{ url_for('mark_job_closed', job_id=job.id) }}" class="d-inline">
+                                                <button type="submit" class="btn btn-sm btn-warning btn-sm-icon"><i class="fas fa-times-circle me-1"></i>Close</button>
+                                            </form>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}<div class="text-center py-5"><i class="fas fa-briefcase fa-3x text-muted mb-3"></i><p class="text-muted">You haven't posted any jobs yet.</p><a href="{{ url_for('post_job') }}" class="btn btn-primary btn-sm"><i class="fas fa-plus-circle"></i> Post Your First Job</a></div>{% endif %}
+            </div>
+        </div>
+        <div class="card admin-card mt-4">
+            <div class="card-header bg-success"><h5 class="mb-0"><i class="fas fa-user-graduate me-2"></i> Available Students ({{ student_count }})</h5></div>
+            <div class="card-body">
+                {% if available_students %}
+                <div class="list-group">
+                    {% for student in available_students %}
+                    <div class="list-group-item d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="fw-bold">{{ student.name }}</div>
+                            <div class="small text-muted">{{ student.course }} • {{ student.faculty }}</div>
+                            {% if student.results %}
+                            <div class="small mt-1">Results: {{ student.results }}</div>
+                            {% endif %}
+                            {% if student.certificate_hash %}
+                            <div class="small text-muted">Blockchain proof: {{ student.certificate_hash[:16] }}...</div>
+                            {% endif %}
+                        </div>
+                        <a href="mailto:{{ student.email }}" class="btn btn-sm btn-outline-primary">Contact</a>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-center py-4 text-muted">No available students found.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

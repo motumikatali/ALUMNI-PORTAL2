@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+
+{% block title %}Search Alumni{% endblock %}
+
+{% block extra_css %}
+<style>
+    .filter-card {
+        background: white;
+        border-radius: 20px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+    }
+    .result-card {
+        border: none;
+        border-radius: 15px;
+        margin-bottom: 1.5rem;
+        transition: all 0.2s;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .result-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    }
+    .skill-badge {
+        background: #e9ecef;
+        color: #495057;
+        border-radius: 20px;
+        padding: 4px 12px;
+        font-size: 0.75rem;
+        margin-right: 5px;
+        margin-bottom: 5px;
+        display: inline-block;
+    }
+    .avatar-sm {
+        width: 50px;
+        height: 50px;
+        background: linear-gradient(135deg, #6c757d, #495057);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 1.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2 class="mb-4"><i class="fas fa-search me-2"></i> Search Alumni Talent</h2>
+
+    {% if limited %}
+    <div class="alert alert-warning">
+        <i class="fas fa-info-circle me-2"></i> Your account is pending approval. You can only see basic information.
+    </div>
+    {% endif %}
+
+    <!-- Advanced Search Form -->
+    <div class="filter-card">
+        <form method="POST">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Name</label>
+                    <input type="text" name="name" class="form-control" placeholder="Search by name">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Course / Program</label>
+                    <input type="text" name="course" class="form-control" placeholder="e.g., Computer Science">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Skills (comma separated)</label>
+                    <input type="text" name="skills" class="form-control" placeholder="Python, SQL, Leadership">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Min. GPA</label>
+                    <input type="number" step="0.1" name="min_gpa" class="form-control" placeholder="3.0">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Graduation Year</label>
+                    <select name="graduation_year" class="form-select">
+                        <option value="">All Years</option>
+                        <option>2024</option>
+                        <option>2025</option>
+                        <option>2026</option>
+                        <option>2027</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Employment Status</label>
+                    <select name="internship_status" class="form-select">
+                        <option value="all">All</option>
+                        <option value="Seeking Internship">Seeking Internship</option>
+                        <option value="Employed">Employed</option>
+                        <option value="Not Seeking">Not Seeking</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-search me-1"></i> Search
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Results -->
+    {% if results %}
+        <div class="row">
+            {% for r in results %}
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="result-card card h-100">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center mb-3">
+                            <div class="avatar-sm me-3">
+                                <i class="fas fa-user-graduate"></i>
+                            </div>
+                            <div>
+                                <h5 class="card-title mb-0">{{ r.name }}</h5>
+                                <p class="text-muted mb-0">{{ r.course }}</p>
+                            </div>
+                        </div>
+                        <p class="mb-1"><strong>Faculty:</strong> {{ r.faculty }}</p>
+                        {% if not limited %}
+                            <p class="mb-1"><strong>GPA:</strong> {{ r.gpa }}</p>
+                            {% if r.results %}
+                                <p class="mb-1"><strong>Results / Certificates:</strong> {{ r.results }}</p>
+                            {% endif %}
+                            <p><strong>Skills:</strong>
+                                {% if r.skills %}
+                                    {% set skill_list = r.skills.split(',') %}
+                                    {% for skill in skill_list %}
+                                        <span class="skill-badge">{{ skill.strip() }}</span>
+                                    {% endfor %}
+                                {% else %}
+                                    <span class="text-muted">Not specified</span>
+                                {% endif %}
+                            </p>
+                            {% if r.cv_filename %}
+                                <a href="{{ url_for('static', filename='uploads/cv/' + r.cv_filename) }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    <i class="fas fa-file-pdf"></i> View CV
+                                </a>
+                                {% if r.certificate_hash %}
+                                    <div class="mt-2 small text-muted">Blockchain proof: {{ r.certificate_hash[:16] }}...</div>
+                                {% endif %}
+                            {% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="text-center py-5">
+            <i class="fas fa-users-slash fa-3x text-muted mb-3"></i>
+            <p class="text-muted">No alumni found. Try adjusting your search criteria.</p>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

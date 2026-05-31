@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Internship & Placement Tracking – Limkokwing University{% endblock %}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .top-bar { background: #f8f9fa; border-bottom: 1px solid #e9ecef; padding: 0.5rem 0; }
+        .user-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; margin-right: 8px; }
+        .site-footer { background: #1f2937; color: #d1d5db; padding: 2rem 0; margin-top: 3rem; }
+        .site-footer a { color: #f8fafc; text-decoration: none; }
+        .site-footer a:hover { color: #ffffff; }
+        .footer-title { font-weight: 700; margin-bottom: 1rem; color: #f8fafc; }
+        .footer-link { display: block; margin-bottom: 0.5rem; }
+        #notificationDropdown::after { display: none; }
+        .navbar-nav .nav-link { padding: 0.5rem 1rem; font-weight: 500; }
+        .navbar-nav .nav-link i { margin-right: 5px; }
+        @media (max-width: 768px) { 
+            .user-avatar { width: 28px; height: 28px; }
+            .navbar-nav .nav-link { padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+    <nav class="navbar navbar-expand-lg navbar-dark" style="background: linear-gradient(135deg, #1f2937, #111827);">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('home') }}">
+                <i class="fas fa-graduation-cap me-2"></i>Internship & Placement Portal
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    {% if not session.user_id %}
+                        <!-- Guest links -->
+                        <li class="nav-item"><a class="nav-link" href="{{ url_for('login') }}"><i class="fas fa-sign-in-alt"></i> Login</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{{ url_for('register') }}"><i class="fas fa-user-plus"></i> Register</a></li>
+                    {% else %}
+                        <!-- Logged in user links - Home goes to dashboard -->
+                        {% if session.role in ['student', 'alumni'] %}
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('dashboard') }}"><i class="fas fa-home"></i> Home</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('jobs_list') }}"><i class="fas fa-briefcase"></i> Jobs</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('chat') }}"><i class="fas fa-comments"></i> Chat</a></li>
+                        {% elif session.role == 'recruiter' %}
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('recruiter_dashboard') }}"><i class="fas fa-home"></i> Home</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('post_job') }}"><i class="fas fa-plus-circle"></i> Post Job</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('recruiter_alumni') }}"><i class="fas fa-users"></i> Alumni</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('chat') }}"><i class="fas fa-comments"></i> Chat</a></li>
+                        {% elif session.role == 'admin' %}
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('admin_dashboard') }}"><i class="fas fa-home"></i> Home</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('admin_analytics') }}"><i class="fas fa-chart-line"></i> Analytics</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{{ url_for('chat') }}"><i class="fas fa-comments"></i> Chat</a></li>
+                        {% endif %}
+                        
+                        <!-- Notifications Bell -->
+                        <li class="nav-item dropdown">
+                            <a class="nav-link position-relative" href="#" id="notificationDropdown" role="button" data-bs-toggle="dropdown">
+                                <i class="fas fa-bell"></i>
+                                <span id="notificationBadge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="font-size: 0.6rem; display: none;">
+                                    0
+                                </span>
+                            </a>
+                            <div class="dropdown-menu dropdown-menu-end" style="width: 350px; max-height: 400px; overflow-y: auto;">
+                                <div class="dropdown-header">
+                                    <h6 class="mb-0">Notifications</h6>
+                                </div>
+                                <div id="notificationsList">
+                                    <div class="dropdown-item text-muted text-center">Loading...</div>
+                                </div>
+                                <div class="dropdown-divider"></div>
+                                <a class="dropdown-item text-center" href="{{ url_for('notifications') }}">View all</a>
+                            </div>
+                        </li>
+                        
+                        <li class="nav-item">
+                            <button class="btn btn-sm btn-outline-light d-flex align-items-center gap-2 theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme">
+                                <i class="fas fa-moon"></i>
+                                <span class="theme-label">Dark</span>
+                            </button>
+                        </li>
+
+                        <!-- User Avatar -->
+                        <li class="nav-item">
+                            {% if session.profile_picture and session.profile_picture != 'default-avatar.png' %}
+                                <img src="{{ url_for('static', filename='uploads/profiles/' + session.profile_picture) }}" class="user-avatar" style="width: 32px; height: 32px; margin-top: 8px;" onerror="this.onerror=null; this.src='https://ui-avatars.com/api/?name={{ session.name }}&background=6c757d&color=fff';">
+                            {% else %}
+                                <img src="https://ui-avatars.com/api/?name={{ session.name }}&background=6c757d&color=fff" class="user-avatar" style="width: 32px; height: 32px; margin-top: 8px;">
+                            {% endif %}
+                        </li>
+                        
+                        <!-- Logout directly in header -->
+                        <li class="nav-item"><a class="nav-link text-danger" href="{{ url_for('logout') }}"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main class="py-4">
+        <div class="container">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="site-footer">
+        <div class="container">
+            <div class="row gy-4">
+                <div class="col-md-4">
+                    <h5 class="footer-title">Internship & Placement Portal</h5>
+                    <p class="mb-2">A centralized portal for students, alumni, and recruiters at Limkokwing University of Lesotho.</p>
+                    <p class="mb-0">&copy; 2025 Limkokwing University of Lesotho</p>
+                </div>
+                <div class="col-md-4">
+                    <h5 class="footer-title">Quick Links</h5>
+                    <a class="footer-link" href="{{ url_for('home') }}"><i class="fas fa-home me-1"></i> Home</a>
+                    {% if session.user_id %}
+                        {% if session.role in ['student', 'alumni'] %}
+                            <a class="footer-link" href="{{ url_for('dashboard') }}"><i class="fas fa-tachometer-alt me-1"></i> Dashboard</a>
+                            <a class="footer-link" href="{{ url_for('jobs_list') }}"><i class="fas fa-briefcase me-1"></i> Jobs</a>
+                        {% elif session.role == 'recruiter' %}
+                            <a class="footer-link" href="{{ url_for('recruiter_dashboard') }}"><i class="fas fa-tachometer-alt me-1"></i> Dashboard</a>
+                            <a class="footer-link" href="{{ url_for('post_job') }}"><i class="fas fa-plus-circle me-1"></i> Post Job</a>
+                        {% elif session.role == 'admin' %}
+                            <a class="footer-link" href="{{ url_for('admin_dashboard') }}"><i class="fas fa-tachometer-alt me-1"></i> Dashboard</a>
+                            <a class="footer-link" href="{{ url_for('admin_analytics') }}"><i class="fas fa-chart-line me-1"></i> Analytics</a>
+                        {% endif %}
+                        <a class="footer-link" href="{{ url_for('chat') }}"><i class="fas fa-comments me-1"></i> Chat</a>
+                        <a class="footer-link" href="{{ url_for('edit_profile') }}"><i class="fas fa-user-edit me-1"></i> Edit Profile</a>
+                        <a class="footer-link text-danger" href="{{ url_for('logout') }}"><i class="fas fa-sign-out-alt me-1"></i> Logout</a>
+                    {% else %}
+                        <a class="footer-link" href="{{ url_for('login') }}"><i class="fas fa-sign-in-alt me-1"></i> Login</a>
+                        <a class="footer-link" href="{{ url_for('register') }}"><i class="fas fa-user-plus me-1"></i> Register</a>
+                    {% endif %}
+                </div>
+                <div class="col-md-4">
+                    <h5 class="footer-title">Contact Support</h5>
+                    <p class="mb-1">For assistance, contact:</p>
+                    <p class="mb-0"><i class="fas fa-envelope me-1"></i> <strong>Email:</strong> admin@portal.co.ls</p>
+                    <p class="mb-0 mt-2"><i class="fas fa-clock me-1"></i> Mon-Fri: 8am - 5pm</p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script>
+    // Notifications System
+    function checkNotifications() {
+        var badge = document.getElementById('notificationBadge');
+        var container = document.getElementById('notificationsList');
+        if (!badge || !container) return;
+
+        fetch('/api/notifications', { credentials: 'include' })
+            .then(res => {
+                if (!res.ok) throw new Error('Network response was not ok');
+                return res.json();
+            })
+            .then(notifications => {
+                if (notifications && notifications.length > 0) {
+                    badge.style.display = 'inline-block';
+                    badge.textContent = notifications.length > 9 ? '9+' : notifications.length;
+                    
+                    container.innerHTML = notifications.slice(0, 5).map(n => `
+                        <a class="dropdown-item" href="${n.link}">
+                            <div class="d-flex align-items-start gap-2">
+                                <i class="${n.icon} text-secondary mt-1"></i>
+                                <div>
+                                    <strong>${n.title}</strong><br>
+                                    <small>${n.message.substring(0, 80)}${n.message.length > 80 ? '...' : ''}</small><br>
+                                    <small class="text-muted">${new Date(n.created_at).toLocaleString()}</small>
+                                </div>
+                            </div>
+                        </a>
+                    `).join('');
+                } else {
+                    badge.style.display = 'none';
+                    container.innerHTML = '<div class="dropdown-item text-muted text-center">No new notifications</div>';
+                }
+            })
+            .catch(error => {
+                console.error('Error loading notifications:', error);
+                badge.style.display = 'none';
+                container.innerHTML = '<div class="dropdown-item text-muted text-center">Unable to load notifications</div>';
+            });
+    }
+
+    if (document.getElementById('notificationBadge')) {
+        setInterval(checkNotifications, 30000);
+        checkNotifications();
+    }
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,386 @@
+{% extends "base.html" %}
+
+
+
+{% block title %}My Dashboard{% endblock %}
+
+
+
+{% block content %}
+
+{% if academic_data_sync_pending %}
+
+<div class="alert alert-info d-flex align-items-center justify-content-between mb-4" role="alert">
+
+    <div>
+
+        <strong><i class="fas fa-sync-alt me-2"></i>Academic data syncing</strong><br>
+
+        Your academic data is being synced. You'll be notified when ready.
+
+    </div>
+
+    <span class="badge bg-info text-dark">Sync in progress</span>
+
+</div>
+
+{% endif %}
+
+
+
+<div class="dashboard-hero {{ 'student-hero' if session.role == 'student' else 'alumni-hero' }}">
+
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+
+        <div>
+
+            {% if session.role == 'student' %}
+                <p class="badge bg-info text-dark mb-2">📚 Current Student</p>
+                <h1 class="h3 mb-1">Welcome back, {{ session.name }}.</h1>
+                <p class="mb-0">Your academic profile, internship search, and skill growth are ready to move forward.</p>
+            {% else %}
+                <p class="badge bg-warning text-dark mb-2">🎓 Alumni</p>
+                <h1 class="h3 mb-1">Welcome back, {{ session.name }}.</h1>
+                <p class="mb-0">Your career journey, mentorship network, and alumni opportunities are all here.</p>
+            {% endif %}
+
+        </div>
+
+        <div class="d-flex gap-2 flex-wrap">
+
+            <span class="badge bg-dark bg-opacity-50">{{ total_applications or 0 }} applications</span>
+
+            <span class="badge bg-success bg-opacity-75">{{ accepted_apps or 0 }} accepted</span>
+
+            <span class="badge bg-warning text-dark">{{ pending_apps or 0 }} pending</span>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+
+<div class="row g-3 mb-4">
+
+    <div class="col-md-3 col-sm-6">
+
+        {% with icon='fas fa-user-check', label='Profile strength', value=completion_percentage ~ '%' %}
+            {% include "components/metric_card.html" %}
+        {% endwith %}
+
+    </div>
+
+    <div class="col-md-3 col-sm-6">
+
+        {% with icon='fas fa-briefcase', label='Active opportunities', value=jobs|length %}
+            {% include "components/metric_card.html" %}
+        {% endwith %}
+
+    </div>
+
+    <div class="col-md-3 col-sm-6">
+
+        {% with icon='fas fa-robot', label='AI matches', value=recommended_jobs|length %}
+            {% include "components/metric_card.html" %}
+        {% endwith %}
+
+    </div>
+
+    <div class="col-md-3 col-sm-6">
+
+        {% with icon='fas fa-globe', label='Web sources', value=scraped_jobs|length %}
+            {% include "components/metric_card.html" %}
+        {% endwith %}
+
+    </div>
+
+</div>
+
+
+
+<div class="row g-4">
+
+    <div class="col-lg-4">
+
+        <div class="card h-100">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between align-items-center mb-3">
+
+                    <div>
+
+                        <p class="text-muted mb-1">Your profile</p>
+
+                        <h5 class="mb-0">{{ session.name }}</h5>
+
+                    </div>
+
+                    <a href="{{ url_for('edit_profile') }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-pencil-alt"></i></a>
+
+                </div>
+
+                <div class="mb-3">
+
+                    <div class="d-flex justify-content-between small mb-1">
+
+                        <span class="text-muted">Profile completeness</span>
+
+                        <strong>{{ completion_percentage }}%</strong>
+
+                    </div>
+
+                    <div class="progress" style="height: 10px;">
+
+                        <div class="progress-bar" role="progressbar" style="width: {{ completion_percentage }}%;"></div>
+
+                    </div>
+
+                </div>
+
+                <ul class="list-unstyled small mb-0">
+
+                    <li class="d-flex justify-content-between py-2 border-bottom"><span class="text-muted">Course</span><strong>{{ profile.course or 'Not specified' }}</strong></li>
+
+                    <li class="d-flex justify-content-between py-2 border-bottom"><span class="text-muted">Faculty</span><strong>{{ profile.faculty or 'Not specified' }}</strong></li>
+
+                    {% if session.role == 'alumni' %}
+                        <li class="d-flex justify-content-between py-2 border-bottom"><span class="text-muted">Graduation Year</span><strong>{{ profile.graduation_year or 'Not specified' }}</strong></li>
+                    {% endif %}
+
+                    <li class="d-flex justify-content-between py-2 border-bottom"><span class="text-muted">GPA</span><strong>{{ profile.gpa or 'N/A' }}</strong></li>
+
+                    <li class="d-flex justify-content-between py-2"><span class="text-muted">Status</span><span class="badge bg-info text-dark">{{ profile.internship_status or 'Not set' }}</span></li>
+
+                </ul>
+
+                {% if profile.skills %}
+
+                <div class="mt-3">
+
+                    <div class="text-muted small mb-2">Top skills</div>
+
+                    <div class="d-flex flex-wrap gap-2">
+
+                        {% for skill in profile.skills.split(',')[:6] %}
+
+                            <span class="badge bg-dark bg-opacity-75">{{ skill.strip() }}</span>
+
+                        {% endfor %}
+
+                    </div>
+
+                </div>
+
+                {% endif %}
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+
+    <div class="col-lg-8">
+
+        <div class="card mb-4">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between align-items-center mb-3">
+
+                    <div>
+
+                        <p class="text-muted mb-1">AI-recommended opportunities</p>
+
+                        <h5 class="mb-0">Smart career matches</h5>
+
+                    </div>
+
+                    <a href="{{ url_for('jobs_list') }}" class="btn btn-sm btn-primary">Browse all</a>
+
+                </div>
+
+                {% if recommended_jobs %}
+
+                <div class="row g-3">
+
+                    {% for match in recommended_jobs %}
+
+                    <div class="col-md-6">
+
+                        <div class="border rounded-3 p-3 h-100 bg-body-secondary bg-opacity-25">
+
+                            <div class="d-flex justify-content-between align-items-start gap-2">
+
+                                <div>
+
+                                    <h6 class="mb-1">{{ match.title }}</h6>
+
+                                    <div class="small text-muted">{{ match.company_name }}</div>
+
+                                </div>
+
+                                <span class="badge bg-success">{{ (match.score * 100)|round(0) }}% match</span>
+
+                            </div>
+
+                            <div class="small text-muted mt-2">{{ match.location or 'Location not listed' }} • {{ match.salary or 'Negotiable' }}</div>
+
+                            <a href="{{ url_for('job_detail', job_id=match.job_id) }}" class="btn btn-sm btn-outline-primary mt-3">View details</a>
+
+                        </div>
+
+                    </div>
+
+                    {% endfor %}
+
+                </div>
+
+                {% else %}
+
+                <div class="text-center py-5 text-muted">
+
+                    <i class="fas fa-robot fa-2x mb-2"></i>
+
+                    <p class="mb-0">Add more skills or complete your profile so AI recommendations can improve.</p>
+
+                </div>
+
+                {% endif %}
+
+            </div>
+
+        </div>
+
+
+
+        <div class="row g-4">
+
+            <div class="col-md-6">
+
+                <div class="card h-100">
+
+                    <div class="card-body">
+
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+
+                            <div>
+
+                                <p class="text-muted mb-1">Posted roles</p>
+
+                                <h5 class="mb-0">Community opportunities</h5>
+
+                            </div>
+
+                            <i class="fas fa-bullhorn text-primary"></i>
+
+                        </div>
+
+                        {% if recent_posted_jobs %}
+
+                            {% for job in recent_posted_jobs[:4] %}
+
+                            <div class="border rounded-3 p-3 mb-2">
+
+                                <div class="d-flex justify-content-between align-items-start">
+
+                                    <div>
+
+                                        <h6 class="mb-1">{{ job.title }}</h6>
+
+                                        <div class="small text-muted">{{ job.company_name }}</div>
+
+                                    </div>
+
+                                    <span class="badge bg-secondary">{{ job.job_type or 'Open' }}</span>
+
+                                </div>
+
+                                <p class="small text-muted mb-2">{{ job.description[:90] }}{% if job.description|length > 90 %}...{% endif %}</p>
+
+                            </div>
+
+                            {% endfor %}
+
+                        {% else %}
+
+                            <p class="text-muted mb-0">No recent posted jobs right now.</p>
+
+                        {% endif %}
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <div class="col-md-6">
+
+                <div class="card h-100">
+
+                    <div class="card-body">
+
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+
+                            <div>
+
+                                <p class="text-muted mb-1">Public listings</p>
+
+                                <h5 class="mb-0">Web-scraped jobs</h5>
+
+                            </div>
+
+                            <i class="fas fa-globe text-primary"></i>
+
+                        </div>
+
+                        {% if scraped_jobs %}
+
+                            {% for job in scraped_jobs[:4] %}
+
+                            <div class="border rounded-3 p-3 mb-2">
+
+                                <div class="d-flex justify-content-between align-items-start">
+
+                                    <div>
+
+                                        <h6 class="mb-1">{{ job.title }}</h6>
+
+                                        <div class="small text-muted">{{ job.company or 'Online source' }}</div>
+
+                                    </div>
+
+                                    <span class="badge bg-dark">Online</span>
+
+                                </div>
+
+                                <p class="small text-muted mb-2">{{ job.location or 'Lesotho' }} • {{ job.salary or 'Negotiable' }}</p>
+
+                            </div>
+
+                            {% endfor %}
+
+                        {% else %}
+
+                            <p class="text-muted mb-0">No scraped jobs available yet.</p>
+
+                        {% endif %}
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+{% endblock %}
+

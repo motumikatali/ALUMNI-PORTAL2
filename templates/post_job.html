@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Post a Job{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow admin-card">
+                <div class="card-header bg-primary">
+                    <h4 class="mb-0"><i class="fas fa-briefcase me-2"></i> {{ 'Edit Job' if job else 'Post a New Job' }}</h4>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('edit_job', job_id=job.id) if job else url_for('post_job') }}">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Job Title <span class="text-danger">*</span></label>
+                            <input type="text" name="title" class="form-control" required value="{{ job.title if job else '' }}">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Description</label>
+                            <textarea name="description" class="form-control" rows="4" placeholder="Describe the role, responsibilities, and team fit.">{{ job.description if job else '' }}</textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Key Requirements</label>
+                            <textarea name="requirements" class="form-control" rows="3" placeholder="List required experience, qualifications, and deliverables.">{{ job.requirements if job else '' }}</textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Skills Required</label>
+                            <input type="text" name="skills_required" class="form-control" placeholder="e.g., Python, SQL, communication, teamwork" value="{{ job.skills_required if job else '' }}">
+                            <div class="form-text">Separate skills with commas so the recommendation engine can match student profiles.</div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-bold">Location</label>
+                                <input type="text" name="location" class="form-control" placeholder="e.g., Maseru, Remote" value="{{ job.location if job else '' }}">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-bold">Salary</label>
+                                <input type="text" name="salary" class="form-control" placeholder="e.g., 8000 LSL" value="{{ job.salary if job else '' }}">
+                            </div>
+                        </div>
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i> After posting, your job will be reviewed by an admin before being visible to students.
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-lg w-100">
+                            <i class="fas fa-paper-plane me-2"></i> {{ 'Save Changes' if job else 'Post Job' }}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

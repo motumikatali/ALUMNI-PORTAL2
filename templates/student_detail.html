@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card shadow-lg">
+    <div class="card-header bg-primary text-white">
+        <h4>Student Profile: {{ student.name }}</h4>
+    </div>
+    <div class="card-body">
+        <p><strong>Course:</strong> {{ student.course }}</p>
+        <p><strong>Faculty:</strong> {{ student.faculty }}</p>
+        <p><strong>GPA:</strong> {{ student.gpa }}</p>
+        <p><strong>Skills:</strong> {{ student.skills or 'None' }}</p>
+        <p><strong>Internship Status:</strong> {{ student.internship_status }}</p>
+        {% if student.cv_filename %}
+            <a href="{{ url_for('static', filename='uploads/cv/' + student.cv_filename) }}" class="btn btn-success me-2">Download CV</a>
+        {% endif %}
+        <a href="{{ url_for('student_projects', student_id=student.id) }}" class="btn btn-primary">View Projects</a>
+    </div>
+</div>
+{% endblock %}

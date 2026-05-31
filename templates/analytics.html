@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Analytics Dashboard{% endblock %}
+{% block extra_css %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+{% block content %}
+<div class="container">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card admin-card">
+                <div class="card-header">
+                    <h4 class="mb-0">📊 Analytics Dashboard</h4>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center mb-4">
+                        <div class="col-md-3 mb-3">
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <h3>{{ total_users }}</h3>
+                                    <p>Total Users</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <h3>{{ total_students }}</h3>
+                                    <p>Students/Alumni</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <h3>{{ total_companies }}</h3>
+                                    <p>Companies</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <h3>{{ total_jobs }}</h3>
+                                    <p>Active Jobs</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <canvas id="programChart" width="400" height="300"></canvas>
+                        </div>
+                        <div class="col-md-6">
+                            <canvas id="employmentChart" width="400" height="300"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Program distribution chart
+    var ctx1 = document.getElementById('programChart').getContext('2d');
+    var programChart = new Chart(ctx1, {
+        type: 'bar',
+        data: {
+            labels: {{ programs|tojson }},
+            datasets: [{
+                label: 'Number of Students',
+                data: {{ program_counts|tojson }},
+                backgroundColor: 'rgba(44,125,160,0.2)',
+                borderColor: '#2c7da0',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    // Employment status pie chart
+    var ctx2 = document.getElementById('employmentChart').getContext('2d');
+    var employmentChart = new Chart(ctx2, {
+        type: 'pie',
+        data: {
+            labels: ['Employed', 'Seeking Internship'],
+            datasets: [{
+                data: [{{ employed }}, {{ seeking }}],
+                backgroundColor: ['#28a745', '#ffc107'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true
+        }
+    });
+</script>
+{% endblock %}

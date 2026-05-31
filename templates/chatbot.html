@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block title %}Portal Chatbot{% endblock %}
+
+{% block extra_css %}
+<style>
+.chatbot-shell {
+    max-width: 960px;
+    margin: 0 auto;
+}
+.chatbot-hero {
+    border-radius: 1.4rem;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    background: var(--bg-panel);
+    box-shadow: var(--shadow);
+}
+.chatbot-hero__top {
+    padding: 1.25rem 1.4rem;
+    background: linear-gradient(135deg, rgba(14, 116, 144, 0.92), rgba(14, 116, 144, 0.72));
+    color: white;
+}
+.chatbot-hero__top p { color: rgba(255,255,255,0.8); }
+.chatbot-hero__body {
+    padding: 1.2rem 1.4rem 1.4rem;
+}
+.chat-history {
+    min-height: 320px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding-right: 0.4rem;
+}
+.chat-bubble {
+    border-radius: 1.1rem;
+    padding: 0.95rem 1rem;
+    margin-bottom: 0.85rem;
+    max-width: 84%;
+    box-shadow: var(--shadow);
+}
+.chat-bubble--user {
+    margin-left: auto;
+    background: linear-gradient(180deg, rgba(14, 116, 144, 0.92), rgba(14, 116, 144, 0.72));
+    color: white;
+}
+.chat-bubble--bot {
+    background: var(--bg-panel-strong);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+}
+.chat-bubble__meta {
+    display: block;
+    margin-top: 0.4rem;
+    font-size: 0.7rem;
+    opacity: 0.7;
+}
+.chat-input-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-end;
+    margin-top: 1rem;
+}
+.chat-input-row textarea {
+    border-radius: 1rem;
+    min-height: 96px;
+    resize: vertical;
+}
+.chat-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.8rem;
+}
+.chat-chip {
+    border-radius: 999px;
+    background: rgba(14, 116, 144, 0.12);
+    color: var(--accent-soft);
+    border: 1px solid rgba(14, 116, 144, 0.2);
+    padding: 0.35rem 0.7rem;
+    font-size: 0.73rem;
+    cursor: pointer;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="chatbot-shell">
+    <div class="chatbot-hero">
+        <div class="chatbot-hero__top">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                <div>
+                    <h3 class="mb-1"><i class="fas fa-robot me-2"></i> Portal AI Assistant</h3>
+                    <p class="mb-0">Ask about internships, deadlines, how to apply, or request help. The assistant understands typos and common phrasing.</p>
+                </div>
+                <span class="badge bg-white text-dark">Smart typing • Escalates when needed</span>
+            </div>
+        </div>
+        <div class="chatbot-hero__body">
+            <div id="chatMessages" class="chat-history"></div>
+
+            <div class="chat-chip-row">
+                <button class="chat-chip" type="button" onclick="insertPrompt('How do I apply for internships?')">How do I apply?</button>
+                <button class="chat-chip" type="button" onclick="insertPrompt('What deadlines are upcoming?')">Upcoming deadlines</button>
+                <button class="chat-chip" type="button" onclick="insertPrompt('Can you help with profile setup?')">Profile help</button>
+                <button class="chat-chip" type="button" onclick="insertPrompt('I need help with recruiter messaging')">Recruiter support</button>
+            </div>
+
+            <div class="chat-input-row">
+                <textarea id="botMessageInput" class="form-control" placeholder="Ask about internships, deadlines, or portal support..."></textarea>
+                <button class="btn btn-primary" id="sendBotBtn" onclick="sendBotMessage()">
+                    <i class="fas fa-paper-plane me-1"></i> Send
+                </button>
+            </div>
+            <div class="text-center mt-3">
+                <a href="{{ url_for('chat') }}" class="btn btn-outline-secondary btn-sm"><i class="fas fa-comments me-1"></i> Back to messaging</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const botMessagesEl = document.getElementById('chatMessages');
+const botInput = document.getElementById('botMessageInput');
+const sendBotBtn = document.getElementById('sendBotBtn');
+
+function renderConversation(entries) {
+    botMessagesEl.innerHTML = '';
+    if (!entries.length) {
+        botMessagesEl.innerHTML = '<div class="text-muted text-center py-5">No conversation yet. Ask the assistant a question to begin.</div>';
+        return;
+    }
+    entries.forEach(item => {
+        const bubble = document.createElement('div');
+        bubble.className = 'chat-bubble ' + (item.sender === 'bot' ? 'chat-bubble--bot' : 'chat-bubble--user');
+        bubble.innerHTML = '<div>' + item.message + '</div>' +
+            '<small class="chat-bubble__meta">' + item.sender_label + ' • ' + item.created_at + '</small>';
+        botMessagesEl.appendChild(bubble);
+    });
+    botMessagesEl.scrollTop = botMessagesEl.scrollHeight;
+}
+
+function formatDate(timestamp) {
+    const date = new Date(timestamp);
+    return date.toLocaleString();
+}
+
+function insertPrompt(text) {
+    botInput.value = text;
+    botInput.focus();
+}
+
+function loadBotConversation() {
+    fetch('{{ url_for("chatbot_conversations") }}')
+        .then(res => res.json())
+        .then(data => {
+            const items = data.flatMap(entry => [
+                { sender: 'user', sender_label: 'You', message: entry.user_message, created_at: formatDate(entry.created_at) },
+                { sender: 'bot', sender_label: 'Assistant', message: entry.bot_response, created_at: formatDate(entry.created_at) }
+            ]);
+            renderConversation(items);
+        })
+        .catch(err => {
+            botMessagesEl.innerHTML = '<div class="text-danger text-center py-5">Unable to load chatbot history.</div>';
+            console.error(err);
+        });
+}
+
+function sendBotMessage() {
+    const message = botInput.value.trim();
+    if (!message) return;
+
+    sendBotBtn.disabled = true;
+    sendBotBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Sending';
+
+    fetch('{{ url_for("chatbot_send_message") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({message})
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            botInput.value = '';
+            loadBotConversation();
+            if (data.escalated) {
+                alert('Your question could not be answered automatically and has been forwarded to admin.');
+            }
+        } else {
+            alert('Error: ' + (data.error || 'Unable to send message'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('Error sending message.');
+    })
+    .finally(() => {
+        sendBotBtn.disabled = false;
+        sendBotBtn.innerHTML = '<i class="fas fa-paper-plane me-1"></i> Send';
+    });
+}
+
+loadBotConversation();
+</script>
+{% endblock %}

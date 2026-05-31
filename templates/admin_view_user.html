@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+
+{% block title %}User Details - {{ user.name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="user-detail-card">
+        <!-- Grey Header -->
+        <div class="user-header" style="background: linear-gradient(135deg, #6c757d, #495057);">
+            <h4><i class="fas fa-user-circle me-2"></i> {{ user.name }}</h4>
+            <div class="user-role">
+                <span class="badge-role">{{ user.role | capitalize }}</span>
+                <span class="ms-2"><i class="fas fa-envelope me-1"></i> {{ user.email }}</span>
+            </div>
+        </div>
+
+        <!-- Basic Information -->
+        <div class="user-detail-section">
+            <div class="user-section-title">
+                <i class="fas fa-info-circle me-2"></i> Basic Information
+            </div>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-envelope"></i></div>
+                    <div class="info-label">Email</div>
+                    <div class="info-value">{{ user.email }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-tag"></i></div>
+                    <div class="info-label">Role</div>
+                    <div class="info-value">
+                        <span class="badge {% if user.role == 'admin' %}bg-secondary{% elif user.role == 'recruiter' %}bg-secondary{% else %}bg-secondary{% endif %}">
+                            {{ user.role | capitalize }}
+                        </span>
+                    </div>
+                </div>
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-calendar-alt"></i></div>
+                    <div class="info-label">Joined</div>
+                    <div class="info-value">{{ user.created_at[:10] if user.created_at else 'N/A' }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Student / Alumni Academic Profile -->
+        {% if profile %}
+        <div class="user-detail-section">
+            <div class="user-section-title">
+                <i class="fas fa-graduation-cap me-2"></i> Academic Profile
+            </div>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-book"></i></div>
+                    <div class="info-label">Course</div>
+                    <div class="info-value">{{ profile.course or 'Not specified' }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-chalkboard-user"></i></div>
+                    <div class="info-label">Faculty</div>
+                    <div class="info-value">{{ profile.faculty or 'Not specified' }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-chart-line"></i></div>
+                    <div class="info-label">GPA</div>
+                    <div class="info-value">{{ profile.gpa or 'N/A' }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-calendar-alt"></i></div>
+                    <div class="info-label">Graduation Year</div>
+                    <div class="info-value">{{ profile.graduation_year or 'N/A' }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-code"></i></div>
+                    <div class="info-label">Skills</div>
+                    <div class="info-value">{{ profile.skills or 'None' }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-briefcase"></i></div>
+                    <div class="info-label">Internship Status</div>
+                    <div class="info-value">
+                        <span class="badge 
+                            {% if profile.internship_status == 'Employed' %}bg-success
+                            {% elif profile.internship_status == 'Seeking Internship' %}bg-warning text-dark
+                            {% else %}bg-secondary{% endif %}">
+                            {{ profile.internship_status or 'Not set' }}
+                        </span>
+                    </div>
+                </div>
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-file-alt"></i></div>
+                    <div class="info-label">Results</div>
+                    <div class="info-value">{{ profile.results or 'None' }}</div>
+                </div>
+                {% if profile.certificate_hash %}
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-shield-alt"></i></div>
+                    <div class="info-label">Blockchain Proof</div>
+                    <div class="info-value"><code>{{ profile.certificate_hash }}</code></div>
+                </div>
+                {% endif %}
+                {% if profile.cv_filename %}
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-file-pdf"></i></div>
+                    <div class="info-label">CV / Resume</div>
+                    <div class="info-value">
+                        <a href="{{ url_for('static', filename='uploads/cv/' + profile.cv_filename) }}" target="_blank" class="btn btn-sm btn-outline-secondary">
+                            <i class="fas fa-download"></i> View CV
+                        </a>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Recruiter Company Information -->
+        {% if recruiter_info %}
+        <div class="user-detail-section">
+            <div class="user-section-title">
+                <i class="fas fa-building me-2"></i> Company Information
+            </div>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-building"></i></div>
+                    <div class="info-label">Company Name</div>
+                    <div class="info-value">{{ recruiter_info.company_name or 'Not provided' }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-industry"></i></div>
+                    <div class="info-label">Industry</div>
+                    <div class="info-value">{{ recruiter_info.industry or 'Not provided' }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-map-marker-alt"></i></div>
+                    <div class="info-label">Location</div>
+                    <div class="info-value">{{ recruiter_info.location or 'Not provided' }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-globe"></i></div>
+                    <div class="info-label">Website</div>
+                    <div class="info-value">
+                        {% if recruiter_info.website %}
+                            <a href="{{ recruiter_info.website }}" target="_blank">{{ recruiter_info.website }}</a>
+                        {% else %}
+                            Not provided
+                        {% endif %}
+                    </div>
+                </div>
+                {% if recruiter_info.website_title %}
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-heading"></i></div>
+                    <div class="info-label">Website Title</div>
+                    <div class="info-value">{{ recruiter_info.website_title }}</div>
+                </div>
+                {% endif %}
+                {% if recruiter_info.website_description %}
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-align-left"></i></div>
+                    <div class="info-label">Website Description</div>
+                    <div class="info-value">{{ recruiter_info.website_description }}</div>
+                </div>
+                {% endif %}
+                {% if recruiter_info.website_logo_url %}
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-image"></i></div>
+                    <div class="info-label">Website Logo</div>
+                    <div class="info-value">
+                        <a href="{{ recruiter_info.website_logo_url }}" target="_blank">View Image</a>
+                    </div>
+                </div>
+                {% endif %}
+                <div class="info-item">
+                    <div class="info-icon"><i class="fas fa-check-circle"></i></div>
+                    <div class="info-label">Verification Status</div>
+                    <div class="info-value">
+                        {% if recruiter_info.verified == 1 %}
+                            <span class="badge bg-success">Approved</span>
+                        {% else %}
+                            <span class="badge bg-warning text-dark">Pending</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="text-center mt-4">
+        <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left me-1"></i> Back to Admin Dashboard
+        </a>
+    </div>
+</div>
+{% endblock %}
