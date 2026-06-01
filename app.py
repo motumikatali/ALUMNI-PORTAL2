@@ -109,15 +109,23 @@ def safe_print(*values, **kwargs):
 
 
 # ===================== HUGGING FACE API INTEGRATION =====================
-def get_ai_response(message, conversation_history=None):
+def get_ai_response(message, conversation_history=None, user_id=None, session_id=None):
     """Call Hugging Face API for chat responses"""
     if conversation_history is None:
         conversation_history = []
-    
+
     if not HF_API_TOKEN:
-        return get_fallback_response(message)
-    
-    # Format conversation for context
+        response_text = get_fallback_response(message)
+        return {
+            "response": response_text,
+            "intent": "fallback",
+            "confidence": 0.5,
+            "escalated": False,
+            "clarification": None,
+            "toxicity_flag": False,
+            "context": conversation_history,
+        }
+
     context = ""
     for msg in conversation_history[-3:]:
         if msg.get('role') == 'user':
@@ -125,7 +133,7 @@ def get_ai_response(message, conversation_history=None):
         else:
             context += f"Assistant: {msg.get('content', '')}\n"
     context += f"User: {message}\nAssistant:"
-    
+
     try:
         response = requests.post(
             f"https://api-inference.huggingface.co/models/{CHAT_MODEL}",
@@ -133,36 +141,42 @@ def get_ai_response(message, conversation_history=None):
             json={"inputs": context, "parameters": {"max_length": 150, "temperature": 0.7}},
             timeout=10
         )
-        
+
         if response.status_code == 200:
             result = response.json()
             if isinstance(result, list) and len(result) > 0:
-                return result[0].get('generated_text', '').replace(context, '').strip()
-            return str(result)
+                text = result[0].get('generated_text', '')
+                text = text.replace(context, '').strip()
+            else:
+                text = str(result)
         else:
-            return get_fallback_response(message)
+            text = get_fallback_response(message)
     except Exception as e:
         print(f"API error: {e}")
-        return get_fallback_response(message)
+        text = get_fallback_response(message)
+
+    return {
+        "response": text,
+        "intent": "hf_chatbot",
+        "confidence": 0.75,
+        "escalated": False,
+        "clarification": None,
+        "toxicity_flag": False,
+        "context": conversation_history,
+    }
 
 
 def get_fallback_response(message):
     """Fallback responses when API fails"""
-    responses = {
-        'hi': 'Hello! How can I help you today?',
-        'hello': 'Hi there! What can I do for you?',
-        'help': 'I can help with internships, applications, company info, or connect you with an admin.',
-        'internship': 'You can find internships in the Jobs section. Use the search filter to find positions.',
-        'apply': 'To apply, go to the job posting and click the Apply button.',
-        'deadline': 'Deadlines are shown on each job posting.',
-        'company': 'Company profiles are available in the Companies section.',
-    }
-    
     msg_lower = message.lower()
-    for key in responses:
-        if key in msg_lower:
-            return responses[key]
-    return "I understand. Could you provide more details about what you need help with?"
+    if 'hi' in msg_lower or 'hello' in msg_lower:
+        return "Hello! How can I help you today?"
+    elif 'help' in msg_lower:
+        return "I can help with internships, applications, company info, or connect you with an admin."
+    elif 'apply' in msg_lower:
+        return "To apply, go to the job posting and click the Apply button."
+    else:
+        return "I understand. Could you provide more details about what you need help with?"
 
 
 @lru_cache(maxsize=100)
