@@ -69,8 +69,9 @@ except Exception:
 # import magic as filemagic
 from email_validator import validate_email, EmailNotValidError
 import logging
+from functools import lru_cache
 
-from chatbot_engine import ChatbotEngine, get_ai_response
+from chatbot_engine import ChatbotEngine
 
 # Scikit-learn / pandas for recommendation engine
 SKLEARN_AVAILABLE = False
@@ -88,20 +89,14 @@ try:
 except ImportError:
     print("Scikit-learn is not installed; recommendation engine will fall back to keyword matching.")
 
-# ML libraries for job content analysis
-try:
-    from sentence_transformers import SentenceTransformer
-    ML_AVAILABLE = True
-except ImportError:
-    print("ML libraries not available. Install with: pip install sentence-transformers")
-    ML_AVAILABLE = False
+# Hugging Face API config
+HF_API_TOKEN = os.environ.get('HF_API_TOKEN', '')
+CHAT_MODEL = "microsoft/DialoGPT-small"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
-# Transformer pipeline (optional)
-try:
-    from transformers import pipeline
-    TRANSFORMERS_AVAILABLE = True
-except Exception:
-    TRANSFORMERS_AVAILABLE = False
+# Backward compatibility: ML models now use HF API instead of local imports
+ML_AVAILABLE = False
+sentence_encoder = None
 
 def safe_print(*values, **kwargs):
     sanitized = []
@@ -113,34 +108,67 @@ def safe_print(*values, **kwargs):
     print(*sanitized, **kwargs)
 
 
-# Initialize ML models
-job_similarity_model = None
-sentence_encoder = None
-if ML_AVAILABLE:
+# ===================== HUGGING FACE API INTEGRATION =====================
+def get_ai_response(message, conversation_history=None):
+    """Call Hugging Face API for chat responses"""
+    if conversation_history is None:
+        conversation_history = []
+    
+    if not HF_API_TOKEN:
+        return get_fallback_response(message)
+    
+    # Format conversation for context
+    context = ""
+    for msg in conversation_history[-3:]:
+        if msg.get('role') == 'user':
+            context += f"User: {msg.get('content', '')}\n"
+        else:
+            context += f"Assistant: {msg.get('content', '')}\n"
+    context += f"User: {message}\nAssistant:"
+    
     try:
-        sentence_encoder = SentenceTransformer('all-MiniLM-L6-v2')
-        safe_print("Sentence transformer loaded")
+        response = requests.post(
+            f"https://api-inference.huggingface.co/models/{CHAT_MODEL}",
+            headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
+            json={"inputs": context, "parameters": {"max_length": 150, "temperature": 0.7}},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if isinstance(result, list) and len(result) > 0:
+                return result[0].get('generated_text', '').replace(context, '').strip()
+            return str(result)
+        else:
+            return get_fallback_response(message)
     except Exception as e:
-        safe_print(f"Sentence transformer loading failed: {e}")
-        sentence_encoder = None
-        ML_AVAILABLE = False
+        print(f"API error: {e}")
+        return get_fallback_response(message)
 
-# Initialize ML models
-job_classifier = None
-sentence_encoder = None
 
-if ML_AVAILABLE and TRANSFORMERS_AVAILABLE:
-    try:
-        job_classifier = pipeline("text-classification",
-                                  model="facebook/bart-large-mnli",
-                                  return_all_scores=True)
-        sentence_encoder = SentenceTransformer('all-MiniLM-L6-v2')
-        safe_print("ML models loaded successfully")
-    except Exception as e:
-        safe_print(f"ML model loading failed: {e}")
-        ML_AVAILABLE = False
-elif ML_AVAILABLE and not TRANSFORMERS_AVAILABLE:
-    safe_print("transformers.pipeline not available; install transformers to enable job classification")
+def get_fallback_response(message):
+    """Fallback responses when API fails"""
+    responses = {
+        'hi': 'Hello! How can I help you today?',
+        'hello': 'Hi there! What can I do for you?',
+        'help': 'I can help with internships, applications, company info, or connect you with an admin.',
+        'internship': 'You can find internships in the Jobs section. Use the search filter to find positions.',
+        'apply': 'To apply, go to the job posting and click the Apply button.',
+        'deadline': 'Deadlines are shown on each job posting.',
+        'company': 'Company profiles are available in the Companies section.',
+    }
+    
+    msg_lower = message.lower()
+    for key in responses:
+        if key in msg_lower:
+            return responses[key]
+    return "I understand. Could you provide more details about what you need help with?"
+
+
+@lru_cache(maxsize=100)
+def get_cached_response(message):
+    """Cache responses for identical messages"""
+    return get_ai_response(message)
 
 app = Flask(__name__)
 app.secret_key = "portal_secret_key_2026_change_this_in_production"
