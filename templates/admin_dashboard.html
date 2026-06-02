@@ -9,15 +9,38 @@
         border-radius: 1rem;
         padding: 1.5rem;
         text-align: center;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
         transition: transform 0.2s;
         height: 100%;
     }
-    .stat-card:hover { transform: translateY(-5px); }
-    .stat-card i { font-size: 2rem; color: #6c757d; margin-bottom: 0.5rem; }
-    .stat-card h2 { font-size: 2rem; font-weight: 700; margin: 0.5rem 0; }
-    @media (max-width: 768px) { .stat-card h2 { font-size: 1.5rem; } }
-    .admin-table { width: 100%; margin-bottom: 0; }
+
+    .stat-card:hover {
+        transform: translateY(-5px);
+    }
+
+    .stat-card i {
+        font-size: 2rem;
+        color: #6c757d;
+        margin-bottom: 0.5rem;
+    }
+
+    .stat-card h2 {
+        font-size: 2rem;
+        font-weight: 700;
+        margin: 0.5rem 0;
+    }
+
+    @media (max-width: 768px) {
+        .stat-card h2 {
+            font-size: 1.5rem;
+        }
+    }
+
+    .admin-table {
+        width: 100%;
+        margin-bottom: 0;
+    }
+
     .admin-table th {
         background-color: #f8f9fa;
         border-bottom: 2px solid #dee2e6;
@@ -25,10 +48,172 @@
         color: #495057;
         white-space: nowrap;
     }
-    .admin-table td { vertical-align: middle; padding: 0.75rem; }
-    .admin-table tr:hover { background-color: rgba(108,117,125,0.05); }
-    .badge-approved { background-color: #28a745; color: white; padding: 0.35rem 0.75rem; border-radius: 20px; font-size: 0.75rem; }
-    .badge-pending { background-color: #ffc107; color: #212529; padding: 0.35rem 0.75rem; border-radius: 20px; font-size: 0.75rem; }
+
+    .admin-quick-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 280px);
+        justify-content: center;
+        gap: 1.5rem;
+        margin: 2rem auto;
+    }
+
+    .quick-card {
+        background: white;
+        border-radius: 20px;
+        padding: 2.5rem 1.5rem;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s;
+        border: 1px solid #e9ecef;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        min-height: 220px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .quick-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+        border-color: #6c757d;
+    }
+
+    .quick-card i {
+        font-size: 3rem;
+        margin-bottom: 1.2rem;
+    }
+
+    .quick-card h6 {
+        font-size: 1.2rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        color: #2d3748;
+    }
+
+    .quick-card small {
+        font-size: 0.9rem;
+        color: #718096;
+    }
+
+    .admin-quick-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 2rem;
+        max-width: 1000px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+    }
+
+    @media (max-width: 768px) {
+        .admin-quick-grid {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        .quick-card {
+            padding: 1.5rem;
+            min-height: 180px;
+        }
+
+        .quick-card i {
+            font-size: 2rem;
+        }
+
+        .quick-card h6 {
+            font-size: 1rem;
+        }
+    }
+
+    @media (max-width: 480px) {
+        .admin-quick-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    @media (max-width: 900px) {
+        .admin-quick-grid {
+            grid-template-columns: repeat(2, 280px);
+        }
+    }
+
+    @media (max-width: 600px) {
+        .admin-quick-grid {
+            grid-template-columns: 1fr;
+            justify-items: center;
+        }
+    }
+
+    @media (max-width: 768px) {
+        .admin-quick-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    @media (max-width: 480px) {
+        .admin-quick-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .quick-card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.2rem;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.2s;
+        border: 1px solid #dee2e6;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .quick-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        border-color: #6c757d;
+    }
+
+    .quick-card i {
+        font-size: 1.8rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .quick-card h6 {
+        font-size: 0.9rem;
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+    }
+
+    .quick-card small {
+        font-size: 0.7rem;
+        color: #6c757d;
+    }
+
+    .admin-table td {
+        vertical-align: middle;
+        padding: 0.75rem;
+    }
+
+    .admin-table tr:hover {
+        background-color: rgba(108, 117, 125, 0.05);
+    }
+
+    .badge-approved {
+        background-color: #28a745;
+        color: white;
+        padding: 0.35rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+    }
+
+    .badge-pending {
+        background-color: #ffc107;
+        color: #212529;
+        padding: 0.35rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+    }
+
     .card-header {
         background: linear-gradient(135deg, #6c757d, #495057);
         color: white;
@@ -37,12 +222,37 @@
         cursor: pointer;
         transition: background 0.2s;
     }
-    .card-header:hover { background: linear-gradient(135deg, #5a6268, #343a40); }
-    .card-header i.chevron { transition: transform 0.2s; }
-    .card-header .collapsed i.chevron { transform: rotate(-90deg); }
-    .faculty-badge { background-color: #6c757d; color: white; border-radius: 20px; padding: 0.25rem 0.75rem; font-size: 0.8rem; margin-left: 0.5rem; }
-    .accordion-button:not(.collapsed) { background-color: #e9ecef; color: #212529; }
-    .accordion-button:focus { box-shadow: none; border-color: #dee2e6; }
+
+    .card-header:hover {
+        background: linear-gradient(135deg, #5a6268, #343a40);
+    }
+
+    .card-header i.chevron {
+        transition: transform 0.2s;
+    }
+
+    .card-header .collapsed i.chevron {
+        transform: rotate(-90deg);
+    }
+
+    .faculty-badge {
+        background-color: #6c757d;
+        color: white;
+        border-radius: 20px;
+        padding: 0.25rem 0.75rem;
+        font-size: 0.8rem;
+        margin-left: 0.5rem;
+    }
+
+    .accordion-button:not(.collapsed) {
+        background-color: #e9ecef;
+        color: #212529;
+    }
+
+    .accordion-button:focus {
+        box-shadow: none;
+        border-color: #dee2e6;
+    }
 </style>
 {% endblock %}
 
@@ -52,686 +262,131 @@
 
     <!-- Statistics Cards -->
     <div class="row g-4 mb-5">
-        <div class="col-6 col-md-3"><div class="stat-card"><i class="fas fa-users"></i><h2>{{ total_users|default(0) }}</h2><p class="text-muted mb-0">Total Users</p></div></div>
-        <div class="col-6 col-md-3"><div class="stat-card"><i class="fas fa-graduation-cap"></i><h2>{{ total_students|default(0) }}</h2><p class="text-muted mb-0">Students / Alumni</p></div></div>
-        <div class="col-6 col-md-3"><div class="stat-card"><i class="fas fa-building"></i><h2>{{ total_companies|default(0) }}</h2><p class="text-muted mb-0">Companies</p></div></div>
-        <div class="col-6 col-md-3"><div class="stat-card"><i class="fas fa-briefcase"></i><h2>{{ total_jobs|default(0) }}</h2><p class="text-muted mb-0">Active Jobs</p></div></div>
-    </div>
-
-    <!-- Quick Actions Bar -->
-    <div class="row g-3 mb-5">
-        <div class="col-md-6">
-            <a href="{{ url_for('verify_results_page') }}" class="btn btn-primary btn-lg w-100">
-                <i class="fas fa-check-circle me-2"></i> Verify Student Results
-            </a>
-        </div>
-        <div class="col-md-6">
-            <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary btn-lg w-100">
-                <i class="fas fa-sync me-2"></i> Refresh Dashboard
-            </a>
-        </div>
-    </div>
-
-    <!-- ===================== 1. Students & Alumni by Faculty (Collapsible Card) ===================== -->
-    <div class="card shadow mb-5">
-        <div class="card-header" data-bs-toggle="collapse" data-bs-target="#collapseStudents" aria-expanded="true" aria-controls="collapseStudents">
-            <div class="d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-user-graduate me-2"></i> Students & Alumni by Faculty</h5>
-                <i class="fas fa-chevron-down chevron"></i>
+        <div class="col-6 col-md-3">
+            <div class="stat-card" onclick="location.href='{{ url_for('admin_all_profiles') }}'"
+                style="cursor: pointer;">
+                <i class="fas fa-users"></i>
+                <h2>{{ total_users|default(0) }}</h2>
+                <p class="text-muted mb-0">Total Users</p>
             </div>
         </div>
-        <div id="collapseStudents" class="collapse show">
-            <div class="card-body p-0">
-                <div class="accordion" id="facultyAccordion">
-                    {% for faculty, students_list in students_by_faculty.items() %}
-                    <div class="accordion-item">
-                        <h2 class="accordion-header" id="heading{{ loop.index }}">
-                            <button class="accordion-button {% if not loop.first %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#collapse{{ loop.index }}" aria-expanded="{% if loop.first %}true{% else %}false{% endif %}" aria-controls="collapse{{ loop.index }}">
-                                <i class="fas fa-building me-2"></i> {{ faculty }}
-                                <span class="faculty-badge">{{ students_list|length }} students</span>
-                            </button>
-                        </h2>
-                        <div id="collapse{{ loop.index }}" class="accordion-collapse collapse {% if loop.first %}show{% endif %}" data-bs-parent="#facultyAccordion">
-                            <div class="accordion-body p-0">
-                                {% if students_list %}
-                                    <div class="table-responsive">
-                                        <table class="table admin-table mb-0">
-                                            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Course</th><th>GPA</th><th>Skills</th><th>Action</th></tr></thead>
-                                            <tbody>
-                                                {% for s in students_list %}
-                                                <tr>
-                                                    <td><strong>{{ s.name }}</strong></td>
-                                                    <td>{{ s.email }}</td>
-                                                    <td>{{ s.role|capitalize }}</td>
-                                                    <td>{{ s.course or '—' }}</td>
-                                                    <td>{{ s.gpa or '—' }}</td>
-                                                    <td>{% if s.skills %}{{ s.skills|truncate(50) }}{% else %}—{% endif %}</td>
-                                                    <td><a href="{{ url_for('admin_view_user', user_id=s.id) }}" class="btn btn-sm btn-primary btn-sm-icon"><i class="fas fa-eye"></i> View</a></td>
-                                                </tr>
-                                                {% endfor %}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                {% else %}
-                                    <div class="text-center py-3 text-muted">No students in this faculty.</div>
-                                {% endif %}
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
+        <div class="col-6 col-md-3">
+            <div class="stat-card" onclick="location.href='{{ url_for('admin_all_profiles') }}?role=student'"
+                style="cursor: pointer;">
+                <i class="fas fa-graduation-cap"></i>
+                <h2>{{ total_students|default(0) }}</h2>
+                <p class="text-muted mb-0">Current Students</p>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="stat-card" onclick="location.href='{{ url_for('admin_all_profiles') }}?role=alumni'"
+                style="cursor: pointer;">
+                <i class="fas fa-trophy"></i>
+                <h2>{{ total_alumni|default(0) }}</h2>
+                <p class="text-muted mb-0">Alumni</p>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="stat-card" onclick="location.href='{{ url_for('admin_all_profiles') }}?role=recruiter'"
+                style="cursor: pointer;">
+                <i class="fas fa-building"></i>
+                <h2>{{ total_companies|default(0) }}</h2>
+                <p class="text-muted mb-0">Companies</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions Grid -->
+    <h2 class="text-center mb-4" style="font-size: 2rem; font-weight: 700; color: #2d3748;">
+        <i class="fas fa-shield-alt me-2" style="color: #6c757d;"></i>
+        Admin Dashboard
+    </h2>
+
+    <div class="admin-quick-grid">
+        <div class="quick-card" onclick="location.href='{{ url_for('verify_results_page') }}'">
+            <i class="fas fa-check-circle" style="color: #28a745;"></i>
+            <h6>Verify Results</h6>
+            <small>{{ pending_results_count }} pending</small>
+        </div>
+        <div class="quick-card" onclick="location.href='{{ url_for('admin_all_profiles') }}'">
+            <i class="fas fa-users" style="color: #17a2b8;"></i>
+            <h6>Manage Users</h6>
+            <small>{{ total_users }} total</small>
+        </div>
+        <div class="quick-card" data-bs-toggle="modal" data-bs-target="#broadcastModal">
+            <i class="fas fa-bullhorn" style="color: #fd7e14;"></i>
+            <h6>Broadcast</h6>
+            <small>Send message</small>
+        </div>
+        <div class="quick-card" onclick="location.href='{{ url_for('admin_analytics') }}'">
+            <i class="fas fa-chart-line" style="color: #6f42c1;"></i>
+            <h6>Analytics</h6>
+            <small>View stats</small>
+        </div>
+        <div class="quick-card" onclick="location.href='{{ url_for('admin_forwarded_chats_list') }}'">
+            <i class="fas fa-comment-dots" style="color: #e83e8c;"></i>
+            <h6>Escalated Chats</h6>
+            <small>{{ escalated_count }} pending</small>
+        </div>
+        <div class="quick-card" onclick="location.href='{{ url_for('hidden_admin_monitor') }}'">
+            <i class="fas fa-shield-alt" style="color: #6c757d;"></i>
+            <h6>System Monitor</h6>
+            <small>Security</small>
+        </div>
+        <div class="quick-card" onclick="location.href='{{ url_for('admin_blockchain_logs') }}'">
+            <i class="fas fa-link" style="color: #20c997;"></i>
+            <h6>Blockchain Logs</h6>
+            <small>View verification history</small>
+        </div>
+    </div>
+
+    <!-- Broadcast Modal -->
+    <div class="modal fade" id="broadcastModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="fas fa-bullhorn me-2"></i> Send Broadcast Message</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ===================== 2. All Recruiters (Collapsible Card) ===================== -->
-    <div class="card shadow mb-5">
-        <div class="card-header" data-bs-toggle="collapse" data-bs-target="#collapseRecruiters" aria-expanded="true" aria-controls="collapseRecruiters">
-            <div class="d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-building me-2"></i> All Recruiters ({{ recruiters|length }})</h5>
-                <i class="fas fa-chevron-down chevron"></i>
-            </div>
-        </div>
-        <div id="collapseRecruiters" class="collapse show">
-            <div class="card-body p-0">
-                {% if recruiters %}
-                    <div class="table-responsive">
-                        <table class="table admin-table mb-0">
-                            <thead><tr><th>Name</th><th>Email</th><th>Company</th><th>Status</th><th>Action</th></tr></thead>
-                            <tbody>
-                                {% for r in recruiters %}
-                                <tr>
-                                    <td><strong>{{ r.name }}</strong></td>
-                                    <td>{{ r.email }}</td>
-                                    <td>{{ r.company_name or 'Not set' }}</td>
-                                    <td>{% if r.verified == 1 %}<span class="badge-approved">Approved</span>{% else %}<span class="badge-pending">Pending</span>{% endif %}</td>
-                                    <td>
-                                        {% if r.verified == 0 %}
-                                            <a href="{{ url_for('verify_recruiter', user_id=r.user_id) }}" class="btn btn-success btn-sm btn-sm-icon"><i class="fas fa-check-circle"></i> Approve</a>
-                                            <button class="btn btn-danger btn-sm btn-sm-icon ms-2" data-bs-toggle="modal" data-bs-target="#rejectModal{{ r.user_id }}"><i class="fas fa-times-circle"></i> Reject</button>
-                                        {% else %}
-                                            <span class="text-success"><i class="fas fa-check-circle"></i> Verified</span>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                {% else %}
-                    <div class="text-center py-5"><i class="fas fa-building fa-3x text-muted mb-3"></i><p class="text-muted">No recruiters registered yet.</p></div>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-
-    <div class="card shadow mb-5">
-        <div class="card-header" data-bs-toggle="collapse" data-bs-target="#collapseResults" aria-expanded="true" aria-controls="collapseResults">
-            <div class="d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-file-signature me-2"></i> Pending Result Verifications <span class="badge bg-warning text-dark ms-2">{{ pending_results_count }}</span></h5>
-                <i class="fas fa-chevron-down chevron"></i>
-            </div>
-        </div>
-        <div id="collapseResults" class="collapse show">
-            <div class="card-body p-0">
-                {% if pending_results and pending_results|length > 0 %}
-                <div class="table-responsive">
-                    <table class="table admin-table mb-0">
-                        <thead><tr><th>Student</th><th>Course</th><th>Type</th><th>Submitted</th><th>File</th><th>Action</th></tr></thead>
-                        <tbody>
-                            {% for pr in pending_results %}
-                            <tr>
-                                <td><strong>{{ pr.name }}</strong><br><small>{{ pr.email }}</small></td>
-                                <td>{{ pr.course or '—' }}</td>
-                                <td>{{ pr.result_type or 'Other' }}</td>
-                                <td>{{ pr.created_at }}</td>
-                                <td>{% if pr.results_file %}<a href="{{ url_for('static', filename='uploads/cv/' + pr.results_file) }}" target="_blank">Download</a>{% else %}None{% endif %}</td>
-                                <td>
-                                    <button class="btn btn-sm btn-success" onclick="reviewResult({{ pr.id }}, 'approve')"><i class="fas fa-check me-1"></i> Approve</button>
-                                    <button class="btn btn-sm btn-danger ms-2" onclick="reviewResult({{ pr.id }}, 'reject')"><i class="fas fa-times me-1"></i> Reject</button>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <div class="text-center py-4 text-muted">No pending result verifications at the moment.</div>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-
-    <div class="card shadow mb-5">
-        <div class="card-header" data-bs-toggle="collapse" data-bs-target="#collapseBroadcast" aria-expanded="true" aria-controls="collapseBroadcast">
-            <div class="d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-bullhorn me-2"></i> Admin Broadcasts</h5>
-            </div>
-        </div>
-        <div id="collapseBroadcast" class="collapse show">
-            <div class="card-body">
-                <form id="broadcastForm">
-                    <div class="mb-3">
-                        <label for="broadcastMessage" class="form-label">Send announcement to all users</label>
-                        <textarea id="broadcastMessage" class="form-control" rows="3" placeholder="Enter message to broadcast to students, alumni, and recruiters"></textarea>
-                    </div>
-                    <button type="button" class="btn btn-primary" onclick="sendBroadcast()">Send Broadcast</button>
-                </form>
-                <div class="mt-4">
-                    <h6>Recent Broadcasts</h6>
-                    {% if broadcasts and broadcasts|length > 0 %}
-                        <ul class="list-group list-group-flush">
-                            {% for bm in broadcasts %}
-                                <li class="list-group-item">
-                                    <strong>{{ bm.admin_name }}</strong> — {{ bm.created_at }}<br>
-                                    {{ bm.message }}
-                                </li>
-                            {% endfor %}
-                        </ul>
-                    {% else %}
-                        <p class="text-muted">No broadcasts sent yet.</p>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="card shadow mb-5">
-        <div class="card-header" data-bs-toggle="collapse" data-bs-target="#collapseEscalated" aria-expanded="true" aria-controls="collapseEscalated">
-            <div class="d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-exclamation-circle me-2"></i> Escalated Chatbot Conversations <span class="badge bg-danger ms-2">{{ escalated_count }}</span></h5>
-            </div>
-        </div>
-        <div id="collapseEscalated" class="collapse show">
-            <div class="card-body">
-                {% if escalated_conversations and escalated_conversations|length > 0 %}
-                <div class="table-responsive">
-                    <table class="table admin-table mb-0">
-                        <thead>
-                            <tr><th>User</th><th>Message</th><th>Bot Response</th><th>Submitted</th></tr>
-                        </thead>
-                        <tbody>
-                            {% for conv in escalated_conversations %}
-                            <tr>
-                                <td><strong>{{ conv.user_name }}</strong><br><small>{{ conv.user_email }}</small></td>
-                                <td>{{ conv.user_message }}</td>
-                                <td>{{ conv.bot_response }}</td>
-                                <td>{{ conv.created_at }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <div class="text-center py-4 text-muted">No escalated bot conversations at the moment.</div>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-
-    <!-- ===================== 3. All Posted Jobs (Collapsible Card) ===================== -->
-    <div class="card shadow">
-        <div class="card-header" data-bs-toggle="collapse" data-bs-target="#collapseJobs" aria-expanded="true" aria-controls="collapseJobs">
-            <div class="d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-briefcase me-2"></i> All Posted Jobs ({{ jobs|length }})</h5>
-                <i class="fas fa-chevron-down chevron"></i>
-            </div>
-        </div>
-        <div id="collapseJobs" class="collapse show">
-            <div class="card-body p-0">
-                {% if jobs %}
-                    <div class="table-responsive">
-                        <table class="table admin-table mb-0">
-                            <thead><tr><th>Job Title</th><th>Company</th><th>Location</th><th>Salary</th><th>Status</th><th>Action</th></tr></thead>
-                            <tbody>
-                                {% for j in jobs %}
-                                <tr>
-                                    <td><strong>{{ j.title }}</strong></td>
-                                    <td>{{ j.company_name }}</td>
-                                    <td>{{ j.location or '—' }}</td>
-                                    <td>{{ j.salary or 'Negotiable' }}</td>
-                                    <td>{% if j.status == 'approved' %}<span class="badge-approved">Approved</span>{% else %}<span class="badge-pending">Pending</span>{% endif %}</td>
-                                    <td>
-                                        <a href="{{ url_for('admin_view_job', job_id=j.id) }}" class="btn btn-sm btn-info btn-sm-icon"><i class="fas fa-eye"></i> View</a>
-                                        {% if j.status == 'pending' %}
-                                            <a href="{{ url_for('approve_job', job_id=j.id) }}" class="btn btn-success btn-sm btn-sm-icon ms-2"><i class="fas fa-check-circle"></i> Approve</a>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                {% else %}
-                    <div class="text-center py-5"><i class="fas fa-briefcase fa-3x text-muted mb-3"></i><p class="text-muted">No jobs posted yet.</p></div>
-                {% endif %}
-            </div>
-        </div>
-        <!-- Scraped Jobs Section - Admin can share with students -->
-<div class="card mb-4">
-    <div class="card-header bg-info text-white">
-        <h5><i class="fas fa-globe me-2"></i> Scraped Jobs from Web</h5>
-    </div>
-    <div class="card-body">
-        {% if scraped_jobs %}
-        <div class="table-responsive">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Title</th>
-                        <th>Company</th>
-                        <th>Location</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for job in scraped_jobs %}
-                    <tr>
-                        <td>{{ job.title[:50] }}</td>
-                        <td>{{ job.company or 'N/A' }}</td>
-                        <td>{{ job.location or 'N/A' }}</td>
-                        <td>
-                            <button class="btn btn-sm btn-success" onclick="shareJob({{ job.id }}, '{{ job.title|escape }}')">
-                                <i class="fas fa-share"></i> Share to Students
-                            </button>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <p class="text-muted">No scraped jobs available. Run scraper to fetch jobs.</p>
-        {% endif %}
-    </div>
-</div>
-
-<script>
-function shareJob(jobId, jobTitle) {
-    fetch('/admin/share_scraped_job', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({job_id: jobId})
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            alert('Job shared with all students!');
-            location.reload();
-        } else {
-            alert('Error: ' + data.error);
-        }
-    });
-}
-
-function reviewResult(resultId, action) {
-    const notes = action === 'reject' ? prompt('Please enter a reason for rejection:') : '';
-    if (action === 'reject' && (!notes || notes.trim() === '')) {
-        alert('Please provide a reason for rejecting the result.');
-        return;
-    }
-
-    fetch(`/admin/verify_results/${resultId}`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action: action, notes: notes})
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            alert(data.message);
-            location.reload();
-        } else {
-            alert('Error: ' + data.error);
-        }
-    });
-}
-
-function sendBroadcast() {
-    const message = document.getElementById('broadcastMessage').value.trim();
-    if (!message) {
-        alert('Please enter a message to broadcast.');
-        return;
-    }
-
-    fetch('/admin/broadcast_message', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({message})
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            alert('Broadcast sent successfully.');
-            location.reload();
-        } else {
-            alert('Error: ' + data.error);
-        }
-    });
-}
-</script>
-    <!-- ===================== 4. System Monitoring (Collapsible Card) ===================== -->
-    <div class="card shadow mb-5">
-        <div class="card-header" data-bs-toggle="collapse" data-bs-target="#collapseMonitoring" aria-expanded="false" aria-controls="collapseMonitoring">
-            <div class="d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-shield-alt me-2"></i> System Monitoring</h5>
-                <i class="fas fa-chevron-down chevron"></i>
-            </div>
-        </div>
-        <div id="collapseMonitoring" class="collapse">
-            <div class="card-body">
-                <div class="row">
-                    <!-- Flagged Messages -->
-                    <div class="col-md-6 mb-4">
-                        <h6><i class="fas fa-flag text-warning me-2"></i> Flagged Messages ({{ flagged|length }})</h6>
-                        {% if flagged %}
-                            <div class="table-responsive">
-                                <table class="table table-sm">
-                                    <thead><tr><th>Message</th><th>Sender</th><th>Reason</th><th>Action</th></tr></thead>
-                                    <tbody>
-                                        {% for f in flagged[:10] %}
-                                        <tr>
-                                            <td>{{ f.message|truncate(50) }}</td>
-                                            <td>{{ f.sender }}</td>
-                                            <td>{{ f.reason }}</td>
-                                            <td><button class="btn btn-sm btn-success" onclick="markReviewed({{ f.id }})">Mark Reviewed</button></td>
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
-                            </div>
-                        {% else %}
-                            <p class="text-muted">No flagged messages.</p>
-                        {% endif %}
-                    </div>
-                    <!-- Recent Chats -->
-                    <div class="col-md-6 mb-4">
-                        <h6><i class="fas fa-comments text-info me-2"></i> Recent Chats</h6>
-                        {% if recent_chats %}
-                            <div class="table-responsive">
-                                <table class="table table-sm">
-                                    <thead><tr><th>Sender</th><th>Receiver</th><th>Message</th><th>Time</th></tr></thead>
-                                    <tbody>
-                                        {% for c in recent_chats[:10] %}
-                                        <tr>
-                                            <td>{{ c.sender_name }} ({{ c.sender_role }})</td>
-                                            <td>{{ c.receiver_name }} ({{ c.receiver_role }})</td>
-                                            <td>{{ c.message|truncate(30) }}</td>
-                                            <td>{{ c.created_at }}</td>
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
-                            </div>
-                        {% else %}
-                            <p class="text-muted">No recent chats.</p>
-                        {% endif %}
-                    </div>
-                </div>
-                <!-- Suspicious Users -->
-                <div class="row">
-                    <div class="col-12 mb-4">
-                        <h6><i class="fas fa-globe text-primary me-2"></i> Web Scraping Activity</h6>
-                        {% if recruiters %}
-                            <div class="table-responsive">
-                                <table class="table table-sm">
-                                    <thead><tr><th>Company</th><th>Website</th><th>Title</th><th>Description</th><th>Score</th><th>Status</th></tr></thead>
-                                    <tbody>
-                                        {% for r in recruiters[:10] %}
-                                        <tr>
-                                            <td>{{ r.company_name or r.name }}</td>
-                                            <td><a href="{{ r.website }}" target="_blank">{{ r.website }}</a></td>
-                                            <td>{{ r.website_title or '—' }}</td>
-                                            <td>{{ r.website_description[:50] + '...' if r.website_description and r.website_description|length > 50 else r.website_description or '—' }}</td>
-                                            <td>{{ r.verification_score or 0 }}/100</td>
-                                            <td>{{ r.verification_status or 'pending' }}</td>
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
-                            </div>
-                        {% else %}
-                            <p class="text-muted">No scraping data available.</p>
-                        {% endif %}
-                    </div>
-                    <div class="col-12">
-                        <h6><i class="fas fa-exclamation-triangle text-danger me-2"></i> Suspicious Users</h6>
-                        {% if suspicious_users %}
-                            <div class="table-responsive">
-                                <table class="table table-sm">
-                                    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Contacts</th><th>Messages</th><th>Last Active</th></tr></thead>
-                                    <tbody>
-                                        {% for u in suspicious_users %}
-                                        <tr>
-                                            <td>{{ u.name }}</td>
-                                            <td>{{ u.email }}</td>
-                                            <td>{{ u.role }}</td>
-                                            <td>{{ u.unique_contacts }}</td>
-                                            <td>{{ u.total_messages }}</td>
-                                            <td>{{ u.last_active }}</td>
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
-                            </div>
-                        {% else %}
-                            <p class="text-muted">No suspicious activity detected.</p>
-                        {% endif %}
-                    </div>
-                    <div class="col-12">
-                        <h6><i class="fas fa-phone me-2"></i> Contact Info</h6>
-                        <p class="text-muted">Registered phone numbers and contact details for users.</p>
-                        <div class="mt-3">
-                            <h6>Registered Phone Numbers:</h6>
-                            {% if users_with_phones %}
-                                <div class="table-responsive">
-                                    <table class="table table-sm">
-                                        <thead><tr><th>Name</th><th>Phone</th><th>Role</th></tr></thead>
-                                        <tbody>
-                                            {% for user in users_with_phones[:10] %}
-                                            <tr>
-                                                <td>{{ user.name }}</td>
-                                                <td>{{ user.phone }}</td>
-                                                <td>{{ user.role }}</td>
-                                            </tr>
-                                            {% endfor %}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            {% else %}
-                                <p class="text-muted">No phone numbers registered yet.</p>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ===================== 5. Bulk Communication (Collapsible Card) ===================== -->
-    <div class="card shadow mb-5">
-        <div class="card-header" data-bs-toggle="collapse" data-bs-target="#collapseCommunication" aria-expanded="false" aria-controls="collapseCommunication">
-            <div class="d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-envelope me-2"></i> Bulk Communication</h5>
-                <i class="fas fa-chevron-down chevron"></i>
-            </div>
-        </div>
-        <div id="collapseCommunication" class="collapse">
-            <div class="card-body">
                 <form method="POST" action="{{ url_for('admin_send_bulk_email') }}">
-                    <div class="mb-3">
-                        <label class="form-label">Communication Method</label>
-                        <select name="communication_method" class="form-select" required>
-                            <option value="email">Email</option>
-                            <option value="chat">Chat/Text</option>
-                        </select>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Send via</label>
+                            <select name="communication_method" class="form-select" required>
+                                <option value="email">📧 Email</option>
+                                <option value="chat">💬 Chat Message</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Send to</label>
+                            <select name="recipient_group" class="form-select" required>
+                                <option value="all_students">🎓 All Students & Alumni</option>
+                                <option value="all_users">👥 All Users</option>
+                                <option value="recruiters">🏢 All Recruiters</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Subject / Title</label>
+                            <input type="text" name="subject" class="form-control"
+                                placeholder="e.g., Important Announcement" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Message</label>
+                            <textarea name="message" class="form-control" rows="5"
+                                placeholder="Type your message here..." required></textarea>
+                        </div>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Recipient Group</label>
-                        <select name="recipient_group" class="form-select" required>
-                            <option value="all_students">All Students & Alumni</option>
-                            <option value="all_users">All Users</option>
-                            <option value="recruiters">All Recruiters</option>
-                        </select>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-paper-plane me-1"></i> Send Broadcast
+                        </button>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Subject</label>
-                        <input type="text" name="subject" class="form-control" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Message</label>
-                        <textarea name="message" class="form-control" rows="5" required></textarea>
-                    </div>
-                    <button type="submit" class="btn btn-primary"><i class="fas fa-paper-plane me-2"></i> Send Email</button>
                 </form>
             </div>
         </div>
     </div>
-</div>
 
-<!-- Reject Recruiter Modals -->
-{% for r in recruiters %}{% if r.verified == 0 %}
-<div class="modal fade" id="rejectModal{{ r.user_id }}" tabindex="-1">
-    <div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">Reject Recruiter</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <form method="POST" action="{{ url_for('reject_recruiter', user_id=r.user_id) }}">
-        <div class="modal-body"><p>Are you sure you want to reject <strong>{{ r.name }}</strong>?</p><div class="mb-3"><label class="form-label">Reason for rejection (optional)</label><textarea name="reason" class="form-control" rows="3"></textarea></div></div>
-        <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-danger">Reject Recruiter</button></div>
-    </form></div></div>
-</div>{% endif %}{% endfor %}
+    </script>
 
-<!-- ===================== 6. Pending Results Verification (Collapsible Card) ===================== -->
-<div class="card shadow mb-5">
-    <div class="card-header" data-bs-toggle="collapse" data-bs-target="#collapseResults" aria-expanded="false" aria-controls="collapseResults">
-        <div class="d-flex justify-content-between align-items-center">
-            <h5 class="mb-0"><i class="fas fa-certificate me-2"></i> Blockchain Results Verification</h5>
-            <span id="pendingResultsCount" class="badge bg-warning">0</span>
-            <i class="fas fa-chevron-down chevron"></i>
-        </div>
-    </div>
-    <div id="collapseResults" class="collapse">
-        <div class="card-body">
-            <div id="pendingResultsList">
-                <div class="text-center py-4">
-                    <i class="fas fa-hourglass-half fa-2x text-muted mb-2"></i>
-                    <p class="text-muted">Loading pending results...</p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<script>
-// Load pending results on page load
-function loadPendingResults() {
-    fetch('/admin/pending_results')
-        .then(res => res.json())
-        .then(data => {
-            document.getElementById('pendingResultsCount').textContent = data.length;
-            
-            if (data.length === 0) {
-                document.getElementById('pendingResultsList').innerHTML = `
-                    <div class="text-center py-4">
-                        <i class="fas fa-check-circle fa-2x text-success mb-2"></i>
-                        <p class="text-muted">No pending results to verify.</p>
-                    </div>
-                `;
-                return;
-            }
-            
-            let html = `<div class="table-responsive">
-                <table class="table admin-table">
-                    <thead>
-                        <tr>
-                            <th>Student Name</th>
-                            <th>Email</th>
-                            <th>Course</th>
-                            <th>Results/Cert</th>
-                            <th>Hash</th>
-                            <th>Submitted</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>`;
-            
-            data.forEach(item => {
-                html += `<tr>
-                    <td>${item.name}</td>
-                    <td>${item.email}</td>
-                    <td>${item.course || '—'}</td>
-                    <td>${item.results_text ? item.results_text.substring(0, 50) + '...' : (item.results_file || '—')}</td>
-                    <td><code style="font-size: 0.75rem;">${item.certificate_hash.substring(0, 16)}...</code></td>
-                    <td>${new Date(item.created_at).toLocaleDateString()}</td>
-                    <td>
-                        <button class="btn btn-sm btn-success" onclick="verifyResults(${item.id}, 'approve')">
-                            <i class="fas fa-check"></i> Verify
-                        </button>
-                        <button class="btn btn-sm btn-danger" onclick="verifyResults(${item.id}, 'reject')">
-                            <i class="fas fa-times"></i> Reject
-                        </button>
-                    </td>
-                </tr>`;
-            });
-            
-            html += `</tbody></table></div>`;
-            document.getElementById('pendingResultsList').innerHTML = html;
-        })
-        .catch(e => {
-            console.error('Error loading pending results:', e);
-            document.getElementById('pendingResultsList').innerHTML = `
-                <div class="alert alert-danger">Failed to load pending results</div>
-            `;
-        });
-}
-
-function verifyResults(verificationId, action) {
-    const notes = prompt(action === 'approve' ? 'Verification notes (optional):' : 'Rejection reason (required):');
-    
-    if (action === 'reject' && !notes) {
-        alert('Please provide a rejection reason');
-        return;
-    }
-    
-    fetch('/admin/verify_results/' + verificationId, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: action, notes: notes || '' })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            alert(data.message);
-            loadPendingResults();
-        } else {
-            alert('Error: ' + data.error);
-        }
-    })
-    .catch(e => {
-        console.error('Error:', e);
-        alert('Error processing verification');
-    });
-}
-
-// Load results on page load
-loadPendingResults();
-
-function markReviewed(flagId) {
-    fetch('/admin/mark-reviewed/' + flagId, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include'
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.status === 'ok') {
-            location.reload();
-        } else {
-            alert('Error marking as reviewed');
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Error marking as reviewed');
-    });
-}
-</script>
-{% endblock %}
+    {% endblock %}

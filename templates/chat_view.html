@@ -24,7 +24,7 @@
                 </div>
 
                 <!-- Messages Area -->
-                {% if friend_status and friend_status['status'] == 'accepted' %}
+                {% if direct_chat_allowed or (friend_status and friend_status['status'] == 'accepted') %}
                     <div class="card-body" id="messages-container" style="overflow-y: auto; flex: 1; background-color: #f8f9fa;">
                         {% for msg in messages %}
                             <div class="mb-3 {% if msg['sender_id'] == session['user_id'] %}text-end{% endif %}">

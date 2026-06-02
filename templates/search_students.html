@@ -140,9 +140,7 @@
                                 <a href="{{ url_for('static', filename='uploads/cv/' + r.cv_filename) }}" target="_blank" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-file-pdf"></i> View CV
                                 </a>
-                                {% if r.certificate_hash %}
-                                    <div class="mt-2 small text-muted">Blockchain proof: {{ r.certificate_hash[:16] }}...</div>
-                                {% endif %}
+
                             {% endif %}
                         {% endif %}
                     </div>

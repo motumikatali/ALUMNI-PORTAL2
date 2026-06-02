@@ -1,4 +1,17 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+import os
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    session,
+    flash,
+    jsonify,
+)
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from flask_socketio import SocketIO, emit, join_room
 from flask_mail import Mail, Message
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -6,7 +19,6 @@ from flask_sqlalchemy import SQLAlchemy
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-import os
 import json
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
@@ -22,14 +34,17 @@ from flask import send_file
 import secrets
 import re
 import threading
+import time
 from sqlalchemy import text
 from flask_caching import Cache
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
+
 # ===================== NEW LIBRARIES INSTALLED =====================
 import requests
 from bs4 import BeautifulSoup
+
 try:
     import whois
 except ImportError:
@@ -78,6 +93,7 @@ SKLEARN_AVAILABLE = False
 PANDAS_AVAILABLE = False
 try:
     import pandas as pd
+
     PANDAS_AVAILABLE = True
 except ImportError:
     print("Pandas is not installed; recommendation engine will use fallback logic.")
@@ -85,12 +101,15 @@ except ImportError:
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
+
     SKLEARN_AVAILABLE = True
 except ImportError:
-    print("Scikit-learn is not installed; recommendation engine will fall back to keyword matching.")
+    print(
+        "Scikit-learn is not installed; recommendation engine will fall back to keyword matching."
+    )
 
 # Hugging Face API config
-HF_API_TOKEN = os.environ.get('HF_API_TOKEN', '')
+HF_API_TOKEN = os.environ.get("HF_API_TOKEN", "")
 CHAT_MODEL = "microsoft/DialoGPT-small"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
@@ -98,67 +117,300 @@ EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 ML_AVAILABLE = False
 sentence_encoder = None
 
+
 def safe_print(*values, **kwargs):
     sanitized = []
     for value in values:
         if isinstance(value, str):
-            sanitized.append(value.encode('ascii', 'ignore').decode('ascii'))
+            sanitized.append(value.encode("ascii", "ignore").decode("ascii"))
         else:
             sanitized.append(str(value))
     print(*sanitized, **kwargs)
 
 
-# ===================== HUGGING FACE API INTEGRATION =====================
-def get_ai_response(message, conversation_history=None, user_id=None, session_id=None):
-    """Call Hugging Face API for chat responses"""
-    if conversation_history is None:
-        conversation_history = []
+# ===================== AI DOCUMENT VERIFICATION FUNCTION =====================
+def ai_verify_document(results_text, file_path=None):
+    """
+    AI-powered document verification
+    Returns: {verified: bool, confidence: float, analysis: str}
+    """
+    confidence = 0
+    analysis = []
 
+    # Check for fake transcript indicators
+    fake_indicators = [
+        "fake",
+        "sample",
+        "demo",
+        "test",
+        "example",
+        "not real",
+        "for testing",
+        "mock",
+        "unofficial",
+        "draft",
+        "template",
+    ]
+
+    if results_text:
+        text_lower = results_text.lower()
+
+        # Check for fake indicators
+        for indicator in fake_indicators:
+            if indicator in text_lower:
+                confidence -= 15
+                analysis.append(f"Found fake indicator: '{indicator}'")
+
+        # Check for proper transcript format
+        if "transcript" in text_lower or "academic" in text_lower:
+            confidence += 10
+            analysis.append("Contains academic terminology")
+
+        if "gpa" in text_lower or "grade" in text_lower:
+            confidence += 10
+            analysis.append("Contains grade/GPA information")
+
+        if "university" in text_lower or "institution" in text_lower:
+            confidence += 10
+            analysis.append("Contains institution name")
+
+        # Check for student number format (9 digits)
+        import re
+
+        if re.search(r"\d{9}", text_lower):
+            confidence += 15
+            analysis.append("Valid student number format detected")
+
+    # Check file type and metadata
+    if file_path:
+        try:
+            import magic
+
+            mime = magic.from_file(file_path, mime=True)
+            if "pdf" in mime:
+                confidence += 15
+                analysis.append("PDF document detected - standard format")
+            elif "image" in mime:
+                confidence += 5
+                analysis.append("Image document - manual review recommended")
+        except:
+            pass
+
+    # Determine verification status
+    verified = confidence >= 50
+    status = "verified" if verified else "requires_review"
+
+    return {
+        "verified": verified,
+        "confidence": min(max(confidence, 0), 100),
+        "analysis": "; ".join(analysis) if analysis else "No AI analysis available",
+        "status": status,
+    }
+
+
+# ===================== HUGGING FACE API INTEGRATION =====================
+def get_ai_response(message, user_id=None, session_id=None):
+    """Intelligent AI assistant with context memory and portal statistics"""
+
+    # Get conversation history
+    conversation_history = []
+    if user_id and session_id:
+        conn = get_db()
+        history = conn.execute(
+            """
+            SELECT role, content FROM conversation_memory 
+            WHERE user_id = ? AND session_id = ?
+            ORDER BY created_at DESC LIMIT 10
+        """,
+            (user_id, session_id),
+        ).fetchall()
+        conn.close()
+        conversation_history = [
+            {"role": h["role"], "content": h["content"]} for h in reversed(history)
+        ]
+
+    # Check if user is asking about portal statistics
+    msg_lower = message.lower()
+
+    # Get real-time portal statistics
+    if any(
+        word in msg_lower
+        for word in [
+            "how many",
+            "count",
+            "statistics",
+            "total",
+            "companies",
+            "jobs",
+            "students",
+            "alumni",
+        ]
+    ):
+        try:
+            conn = get_db()
+
+            # Get counts
+            total_companies = conn.execute(
+                "SELECT COUNT(*) FROM recruiters"
+            ).fetchone()[0]
+            total_jobs = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status='approved'"
+            ).fetchone()[0]
+            total_students = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE role='student'"
+            ).fetchone()[0]
+            total_alumni = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE role='alumni'"
+            ).fetchone()[0]
+            total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+            # Get job placement stats
+            placed_students = conn.execute(
+                "SELECT COUNT(*) FROM job_interests WHERE status='accepted'"
+            ).fetchone()[0]
+            pending_applications = conn.execute(
+                "SELECT COUNT(*) FROM job_interests WHERE status='pending'"
+            ).fetchone()[0]
+
+            conn.close()
+
+            if "how many companies" in msg_lower or "companies are" in msg_lower:
+                return {
+                    "response": f"There are currently {total_companies} companies registered on the portal. Would you like to see the list of companies?",
+                    "intent": "portal_stats",
+                    "confidence": 0.95,
+                    "escalated": False,
+                    "clarification": None,
+                    "toxicity_flag": False,
+                    "context": conversation_history,
+                }
+
+            if "how many jobs" in msg_lower or "jobs are" in msg_lower:
+                return {
+                    "response": f"There are {total_jobs} active job postings on the portal right now. {placed_students} students have been placed through the platform!",
+                    "intent": "portal_stats",
+                    "confidence": 0.95,
+                    "escalated": False,
+                    "clarification": None,
+                    "toxicity_flag": False,
+                    "context": conversation_history,
+                }
+
+            if "how many students" in msg_lower or "students are" in msg_lower:
+                return {
+                    "response": f"There are {total_students} current students and {total_alumni} alumni registered on the portal. Total users: {total_users}",
+                    "intent": "portal_stats",
+                    "confidence": 0.95,
+                    "escalated": False,
+                    "clarification": None,
+                    "toxicity_flag": False,
+                    "context": conversation_history,
+                }
+
+            if (
+                "finding jobs" in msg_lower
+                or "placed" in msg_lower
+                or "employment" in msg_lower
+            ):
+                return {
+                    "response": f"{placed_students} students have successfully found jobs through the portal! There are currently {pending_applications} pending applications being reviewed by recruiters.",
+                    "intent": "portal_stats",
+                    "confidence": 0.95,
+                    "escalated": False,
+                    "clarification": None,
+                    "toxicity_flag": False,
+                    "context": conversation_history,
+                }
+
+        except Exception as e:
+            print(f"Stats error: {e}")
+
+    # Educational assistant persona for other questions
+    persona = """You are an intelligent academic and career assistant for Limkokwing University. You are:
+    - Professional, knowledgeable, and helpful
+    - Speaks like a university professor or career counselor
+    - Practical and solution-oriented
+    - Knowledgeable about internships, jobs, resumes, interviews, and career development
+    
+    Be concise (2-3 sentences max unless detailed answer needed). Be warm and encouraging."""
+
+    # Build prompt with context
+    prompt = f"{persona}\n\n"
+
+    for msg in conversation_history[-6:]:
+        prompt += f"{msg['role'].upper()}: {msg['content']}\n"
+
+    prompt += f"USER: {message}\nASSISTANT:"
+
+    # Check for API token
     if not HF_API_TOKEN:
-        response_text = get_fallback_response(message)
+        reply = get_intelligent_fallback(message, conversation_history)
         return {
-            "response": response_text,
+            "response": reply,
             "intent": "fallback",
-            "confidence": 0.5,
+            "confidence": 0.7,
             "escalated": False,
             "clarification": None,
             "toxicity_flag": False,
             "context": conversation_history,
         }
 
-    context = ""
-    for msg in conversation_history[-3:]:
-        if msg.get('role') == 'user':
-            context += f"User: {msg.get('content', '')}\n"
-        else:
-            context += f"Assistant: {msg.get('content', '')}\n"
-    context += f"User: {message}\nAssistant:"
-
     try:
         response = requests.post(
-            f"https://api-inference.huggingface.co/models/{CHAT_MODEL}",
+            f"https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium",
             headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
-            json={"inputs": context, "parameters": {"max_length": 150, "temperature": 0.7}},
-            timeout=10
+            json={
+                "inputs": prompt,
+                "parameters": {
+                    "max_length": 300,
+                    "temperature": 0.7,
+                    "top_p": 0.9,
+                    "do_sample": True,
+                },
+            },
+            timeout=15,
         )
 
         if response.status_code == 200:
             result = response.json()
             if isinstance(result, list) and len(result) > 0:
-                text = result[0].get('generated_text', '')
-                text = text.replace(context, '').strip()
+                reply = result[0].get("generated_text", "")
+                reply = reply.replace(prompt, "").strip()
+                if not reply:
+                    reply = get_intelligent_fallback(message, conversation_history)
             else:
-                text = str(result)
+                reply = str(result)
         else:
-            text = get_fallback_response(message)
+            reply = get_intelligent_fallback(message, conversation_history)
+
     except Exception as e:
         print(f"API error: {e}")
-        text = get_fallback_response(message)
+        reply = get_intelligent_fallback(message, conversation_history)
+
+    # Store in memory
+    if user_id and session_id:
+        conn = get_db()
+        conn.execute(
+            """
+            INSERT INTO conversation_memory (user_id, session_id, role, content)
+            VALUES (?, ?, 'user', ?)
+        """,
+            (user_id, session_id, message),
+        )
+        conn.execute(
+            """
+            INSERT INTO conversation_memory (user_id, session_id, role, content)
+            VALUES (?, ?, 'assistant', ?)
+        """,
+            (user_id, session_id, reply),
+        )
+        conn.commit()
+        conn.close()
 
     return {
-        "response": text,
-        "intent": "hf_chatbot",
-        "confidence": 0.75,
+        "response": reply,
+        "intent": "ai_chatbot",
+        "confidence": 0.85,
         "escalated": False,
         "clarification": None,
         "toxicity_flag": False,
@@ -166,14 +418,60 @@ def get_ai_response(message, conversation_history=None, user_id=None, session_id
     }
 
 
+def get_intelligent_fallback(message, history=None):
+    """Intelligent fallback responses when API is unavailable"""
+    msg_lower = message.lower()
+
+    # Career advice responses
+    if "resume" in msg_lower:
+        return "To create a strong resume: highlight your skills, include relevant coursework, list internships, and proofread carefully. Would you like specific tips for your field?"
+
+    if "interview" in msg_lower:
+        return "For interview success: research the company, practice common questions, prepare your own questions, dress professionally, and send a follow-up email. What industry are you interviewing for?"
+
+    if "internship" in msg_lower:
+        return "Check the jobs page for internship opportunities. Update your profile with all your skills to get better matches. I can help you search for specific internships!"
+
+    if "cover letter" in msg_lower:
+        return "A good cover letter addresses the hiring manager, explains your interest, highlights 2-3 relevant skills, and requests an interview. Would you like me to help you write one?"
+
+    if "salary" in msg_lower:
+        return "Salary expectations vary by industry and experience. Research typical ranges for your field, consider the full benefits package, and be prepared to negotiate professionally."
+
+    if "network" in msg_lower or "networking" in msg_lower:
+        return "Networking tips: update your LinkedIn, attend industry events, join professional associations, reach out to alumni, and always follow up. Building genuine relationships is key!"
+
+    # Portal questions
+    if "how many" in msg_lower or "count" in msg_lower:
+        return "You can see statistics on the admin dashboard. For specific numbers about companies, jobs, or students, please ask your admin or check the analytics page."
+
+    if "company" in msg_lower:
+        return "You can browse all registered companies on the Companies page. Each company profile shows their jobs, description, and contact information."
+
+    if "job" in msg_lower:
+        return "Visit the Jobs page to see all available positions. You can filter by location, job type, and skills. Update your profile skills to get personalized recommendations!"
+
+    # General
+    if any(word in msg_lower for word in ["hi", "hello", "hey"]):
+        return "Hello! I'm your career assistant. How can I help you today? I can assist with job searching, resume tips, interview prep, or answer questions about the portal."
+
+    if "thank" in msg_lower:
+        return "You're very welcome! I'm glad I could help. Is there anything else you need?"
+
+    if "help" in msg_lower:
+        return "I can help with: finding jobs/internships, resume and cover letter tips, interview preparation, career advice, or navigating the portal. What would you like?"
+
+    return "That's a great question. Could you provide more detail? I specialize in career development, job searching, internships, and academic support. I'm here to help!"
+
+
 def get_fallback_response(message):
     """Fallback responses when API fails"""
     msg_lower = message.lower()
-    if 'hi' in msg_lower or 'hello' in msg_lower:
+    if "hi" in msg_lower or "hello" in msg_lower:
         return "Hello! How can I help you today?"
-    elif 'help' in msg_lower:
+    elif "help" in msg_lower:
         return "I can help with internships, applications, company info, or connect you with an admin."
-    elif 'apply' in msg_lower:
+    elif "apply" in msg_lower:
         return "To apply, go to the job posting and click the Apply button."
     else:
         return "I understand. Could you provide more details about what you need help with?"
@@ -184,16 +482,17 @@ def get_cached_response(message):
     """Cache responses for identical messages"""
     return get_ai_response(message)
 
+
 app = Flask(__name__)
 app.secret_key = "portal_secret_key_2026_change_this_in_production"
 
 # Neon PostgreSQL connection
 DATABASE_URL = "postgresql://neondb_owner:npg_71uZUrhQmBJa@ep-hidden-morning-apcsf9y6-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require"
 
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-os.environ['DATABASE_URL'] = DATABASE_URL
+os.environ["DATABASE_URL"] = DATABASE_URL
 
 db = SQLAlchemy(app)
 
@@ -207,72 +506,103 @@ from models import init_models
 # ===================== ENHANCED CONFIGURATIONS =====================
 
 # Cache setup (for faster performance)
-cache = Cache(app, config={'CACHE_TYPE': 'simple'})
+cache = Cache(app, config={"CACHE_TYPE": "simple"})
 
 # Rate limiting (prevent spam)
 limiter = Limiter(
     get_remote_address,
     app=app,
     default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://"
+    storage_uri="memory://",
 )
 
 # Content moderation settings
-BANNED_WORDS = ['scam', 'fraud', 'hate', 'violence', 'kill', 'abuse', 'harassment', 'racist', 'stupid', 'idiot']
+BANNED_WORDS = [
+    "scam",
+    "fraud",
+    "hate",
+    "violence",
+    "kill",
+    "abuse",
+    "harassment",
+    "racist",
+    "stupid",
+    "idiot",
+]
 SUSPICIOUS_PATTERNS = [
-    r'\b(credit card|ssn|password|bank account|bitcoin|paypal)\b',
-    r'\b(buy|sell|cheap|discount)\b.*\b(weed|drugs|pills)\b'
+    r"\b(credit card|ssn|password|bank account|bitcoin|paypal)\b",
+    r"\b(buy|sell|cheap|discount)\b.*\b(weed|drugs|pills)\b",
 ]
 
 # Company verification thresholds
 VERIFICATION_THRESHOLDS = {
-    'auto_approve': 70,  # Score >= 70 = auto-verified
-    'manual_review': 40,  # Score 40-69 = needs admin review
-    'reject': 39  # Score <= 39 = rejected
+    "auto_approve": 70,  # Score >= 70 = auto-verified
+    "manual_review": 40,  # Score 40-69 = needs admin review
+    "reject": 39,  # Score <= 39 = rejected
 }
 
 # ===================== EMAIL CONFIG =====================
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = 'tbosetumi@gmail.com'    # REPLACE
-app.config['MAIL_PASSWORD'] = 'katali5931'       # REPLACE
+app.config["MAIL_SERVER"] = "smtp.gmail.com"
+app.config["MAIL_PORT"] = 587
+app.config["MAIL_USE_TLS"] = True
+app.config["MAIL_USERNAME"] = "tbosetumi@gmail.com"
+app.config["MAIL_PASSWORD"] = "lzqj flee rncy cyce"
 mail = Mail(app)
 
 # ===================== AFRICA'S TALKING SMS CONFIG =====================
 # Replace with your Africa's Talking credentials
-AT_USERNAME = 'sandbox'  # Your Africa's Talking username
+AT_USERNAME = "sandbox"  # Your Africa's Talking username
 # ===================== SOCKETIO =====================
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # ===================== UPLOAD FOLDERS =====================
-UPLOAD_FOLDER = 'static/uploads/cv'
-PROFILE_PIC_FOLDER = 'static/uploads/profiles'
-STATUS_MEDIA_FOLDER = 'static/uploads/statuses'
+UPLOAD_FOLDER = "static/uploads/cv"
+PROFILE_PIC_FOLDER = "static/uploads/profiles"
+STATUS_MEDIA_FOLDER = "static/uploads/statuses"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROFILE_PIC_FOLDER, exist_ok=True)
 os.makedirs(STATUS_MEDIA_FOLDER, exist_ok=True)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['PROFILE_PIC_FOLDER'] = PROFILE_PIC_FOLDER
-app.config['STATUS_MEDIA_FOLDER'] = STATUS_MEDIA_FOLDER
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["PROFILE_PIC_FOLDER"] = PROFILE_PIC_FOLDER
+app.config["STATUS_MEDIA_FOLDER"] = STATUS_MEDIA_FOLDER
 
 scheduler = BackgroundScheduler()
 
+
 def get_db():
-    conn = sqlite3.connect("database.db", timeout=30, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    # Use PostgreSQL on cloud (Vercel/Render), SQLite locally
+    if os.environ.get("VERCEL") or os.environ.get("RENDER"):
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        return conn
+    else:
+        # Local development with SQLite
+        import sqlite3
+
+        conn = sqlite3.connect("database.db", timeout=120, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=120000")
+        conn.execute("PRAGMA foreign_keys=ON")
+        return conn
+
+
+def retry_db_operation(operation, retries=5, delay=1):
+    for attempt in range(retries):
+        try:
+            return operation()
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e).lower() and attempt < retries - 1:
+                time.sleep(delay)
+                continue
+            raise
 
 
 def safe_print(*values, **kwargs):
     sanitized = []
     for value in values:
         if isinstance(value, str):
-            sanitized.append(value.encode('ascii', 'ignore').decode('ascii'))
+            sanitized.append(value.encode("ascii", "ignore").decode("ascii"))
         else:
             sanitized.append(str(value))
     print(*sanitized, **kwargs)
@@ -289,16 +619,22 @@ def cleanup_duplicate_student_numbers(conn):
 
     cleared = 0
     for duplicate in duplicate_rows:
-        user_ids = [int(user_id) for user_id in duplicate['ids'].split(',')]
+        user_ids = [int(user_id) for user_id in duplicate["ids"].split(",")]
         keep_user_id = min(user_ids)
-        duplicate_user_ids = [user_id for user_id in user_ids if user_id != keep_user_id]
+        duplicate_user_ids = [
+            user_id for user_id in user_ids if user_id != keep_user_id
+        ]
         if duplicate_user_ids:
-            placeholders = ','.join('?' for _ in duplicate_user_ids)
+            placeholders = ",".join("?" for _ in duplicate_user_ids)
             conn.execute(
                 f"UPDATE users SET student_number = NULL WHERE id IN ({placeholders})",
-                duplicate_user_ids
+                duplicate_user_ids,
             )
-            logger.warning("Cleared duplicate student_number %s from user ids %s", duplicate['student_number'], duplicate_user_ids)
+            logger.warning(
+                "Cleared duplicate student_number %s from user ids %s",
+                duplicate["student_number"],
+                duplicate_user_ids,
+            )
             cleared += len(duplicate_user_ids)
     return cleared
 
@@ -307,26 +643,26 @@ def repair_corrupt_text_files(root_dir):
     repaired = []
     for directory, _, filenames in os.walk(root_dir):
         for filename in filenames:
-            if not filename.endswith(('.html', '.js', '.css', '.json', '.txt')):
+            if not filename.endswith((".html", ".js", ".css", ".json", ".txt")):
                 continue
             file_path = os.path.join(directory, filename)
             try:
-                raw_bytes = open(file_path, 'rb').read()
+                raw_bytes = open(file_path, "rb").read()
             except OSError:
                 continue
             try:
-                raw_bytes.decode('utf-8')
+                raw_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 repaired_encoding = None
-                for fallback_encoding in ('cp1252', 'latin-1'):
+                for fallback_encoding in ("cp1252", "latin-1"):
                     try:
                         repaired_encoding = raw_bytes.decode(fallback_encoding)
                         break
                     except UnicodeDecodeError:
                         continue
                 if repaired_encoding is None:
-                    repaired_encoding = raw_bytes.decode('latin-1', errors='replace')
-                with open(file_path, 'w', encoding='utf-8') as repaired_file:
+                    repaired_encoding = raw_bytes.decode("latin-1", errors="replace")
+                with open(file_path, "w", encoding="utf-8") as repaired_file:
                     repaired_file.write(repaired_encoding)
                 repaired.append(file_path)
     return repaired
@@ -343,10 +679,14 @@ def is_valid_student_number(student_number):
 
 
 def ensure_user_student_number_schema(conn):
-    existing_user_cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
-    if 'student_number' not in existing_user_cols:
+    existing_user_cols = [
+        row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+    ]
+    if "student_number" not in existing_user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN student_number TEXT")
-    conn.execute("UPDATE users SET student_number = student_id WHERE student_number IS NULL AND student_id IS NOT NULL")
+    conn.execute(
+        "UPDATE users SET student_number = student_id WHERE student_number IS NULL AND student_id IS NOT NULL"
+    )
     duplicate_student_numbers = conn.execute("""
         SELECT student_number, COUNT(*) as cnt
         FROM users
@@ -355,15 +695,29 @@ def ensure_user_student_number_schema(conn):
         HAVING cnt > 1
     """).fetchall()
     for duplicate in duplicate_student_numbers:
-        logger.warning("Duplicate student_number detected during migration: %s (%s rows)", duplicate['student_number'], duplicate['cnt'])
+        logger.warning(
+            "Duplicate student_number detected during migration: %s (%s rows)",
+            duplicate["student_number"],
+            duplicate["cnt"],
+        )
     try:
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_student_number_unique ON users(student_number)")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_student_number_unique ON users(student_number)"
+        )
     except sqlite3.IntegrityError as exc:
         logger.warning("Unable to create unique student_number index: %s", exc)
 
 
 def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'}
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in {
+        "pdf",
+        "doc",
+        "docx",
+        "jpg",
+        "jpeg",
+        "png",
+    }
+
 
 def send_email(recipient, subject, body, html=None):
     try:
@@ -376,10 +730,14 @@ def send_email(recipient, subject, body, html=None):
     except Exception as e:
         print(f"Email error: {e}")
 
+
 # Repair any corrupted text files during startup so Jinja and static assets decode cleanly.
-repaired_files = repair_corrupt_text_files(os.path.join(BASE_DIR, 'templates'))
+repaired_files = repair_corrupt_text_files(os.path.join(BASE_DIR, "templates"))
 if repaired_files:
-    logger.warning("Repaired text encodings in %s files: %s", len(repaired_files), repaired_files)
+    logger.warning(
+        "Repaired text encodings in %s files: %s", len(repaired_files), repaired_files
+    )
+
 
 # ====================== INITIALIZE DATABASE ======================
 def init_db():
@@ -404,18 +762,29 @@ def init_db():
         academic_data_retry_count INTEGER DEFAULT 0,
         academic_data_raw TEXT
     )""")
-    existing_user_cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
-    if 'phone' not in existing_user_cols:
+    cur.execute("""CREATE TABLE IF NOT EXISTS conversation_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+)""")
+    existing_user_cols = [
+        row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+    ]
+    if "phone" not in existing_user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
     ensure_user_student_number_schema(conn)
     cleanup_duplicate_student_numbers(conn)
     for col, col_type in [
-        ('academic_data_pending', 'INTEGER DEFAULT 0'),
-        ('academic_data_last_attempt', 'TIMESTAMP'),
-        ('academic_data_retry_count', 'INTEGER DEFAULT 0'),
-        ('academic_data_raw', 'TEXT'),
-        ('is_alumni', 'INTEGER DEFAULT 0'),
-        ('expected_graduation', 'INTEGER')
+        ("academic_data_pending", "INTEGER DEFAULT 0"),
+        ("academic_data_last_attempt", "TIMESTAMP"),
+        ("academic_data_retry_count", "INTEGER DEFAULT 0"),
+        ("academic_data_raw", "TEXT"),
+        ("is_alumni", "INTEGER DEFAULT 0"),
+        ("expected_graduation", "INTEGER"),
     ]:
         if col not in existing_user_cols:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
@@ -429,10 +798,81 @@ def init_db():
         feedback TEXT,
         UNIQUE(job_id, student_id)
     )""")
-    existing_cols = [row[1] for row in conn.execute("PRAGMA table_info(job_interests)").fetchall()]
-    if 'updated_at' not in existing_cols:
+    existing_cols = [
+        row[1] for row in conn.execute("PRAGMA table_info(job_interests)").fetchall()
+    ]
+    if "updated_at" not in existing_cols:
         conn.execute("ALTER TABLE job_interests ADD COLUMN updated_at TIMESTAMP")
-        conn.execute("UPDATE job_interests SET updated_at = ? WHERE updated_at IS NULL", (datetime.now(),))
+        conn.execute(
+            "UPDATE job_interests SET updated_at = ? WHERE updated_at IS NULL",
+            (datetime.now(),),
+        )
+
+        # Add Blockchain Verification Logs Table
+    cur.execute("""CREATE TABLE IF NOT EXISTS blockchain_verification_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL,
+    verification_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL,
+    confidence_score REAL DEFAULT 0,
+    ai_analysis TEXT,
+    admin_notes TEXT,
+    blockchain_tx_hash TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(student_id) REFERENCES users(id),
+    FOREIGN KEY(verification_id) REFERENCES results_verifications(id)
+)""")
+    # Create predefined skills table
+    cur.execute("""CREATE TABLE IF NOT EXISTS predefined_skills (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        skill_name TEXT UNIQUE NOT NULL,
+        category TEXT
+    )""")
+
+    # Insert predefined skills
+    skills_data = [
+        ("Python", "Programming"),
+        ("JavaScript", "Programming"),
+        ("Java", "Programming"),
+        ("C++", "Programming"),
+        ("HTML/CSS", "Web Development"),
+        ("React", "Web Development"),
+        ("Node.js", "Web Development"),
+        ("SQL", "Database"),
+        ("MongoDB", "Database"),
+        ("Data Analysis", "Data Science"),
+        ("Machine Learning", "Data Science"),
+        ("Project Management", "Business"),
+        ("Communication", "Soft Skills"),
+        ("Leadership", "Soft Skills"),
+        ("Teamwork", "Soft Skills"),
+        ("Problem Solving", "Soft Skills"),
+        ("Graphic Design", "Design"),
+        ("UI/UX", "Design"),
+        ("Digital Marketing", "Marketing"),
+        ("SEO", "Marketing"),
+        ("Content Writing", "Writing"),
+        ("Accounting", "Finance"),
+        ("Customer Service", "Business"),
+        ("Sales", "Business"),
+        ("Research", "Academic"),
+    ]
+
+    for skill, category in skills_data:
+        cur.execute(
+            "INSERT OR IGNORE INTO predefined_skills (skill_name, category) VALUES (?, ?)",
+            (skill, category),
+        )
+    # Create scraped job interests table
+    cur.execute("""CREATE TABLE IF NOT EXISTS scraped_job_interests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scraped_job_id INTEGER NOT NULL,
+        student_id INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(scraped_job_id, student_id)
+    )""")
+
     cur.execute("""CREATE TABLE IF NOT EXISTS mentorships (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         alumni_id INTEGER NOT NULL,
@@ -464,11 +904,15 @@ def init_db():
         certificate_hash TEXT,
         certificate_verified INTEGER DEFAULT 0
     )""")
-    existing_student_cols = [row[1] for row in conn.execute("PRAGMA table_info(students)").fetchall()]
-    if 'certificate_hash' not in existing_student_cols:
+    existing_student_cols = [
+        row[1] for row in conn.execute("PRAGMA table_info(students)").fetchall()
+    ]
+    if "certificate_hash" not in existing_student_cols:
         conn.execute("ALTER TABLE students ADD COLUMN certificate_hash TEXT")
-    if 'certificate_verified' not in existing_student_cols:
-        conn.execute("ALTER TABLE students ADD COLUMN certificate_verified INTEGER DEFAULT 0")
+    if "certificate_verified" not in existing_student_cols:
+        conn.execute(
+            "ALTER TABLE students ADD COLUMN certificate_verified INTEGER DEFAULT 0"
+        )
     cur.execute("""CREATE TABLE IF NOT EXISTS recruiters (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER UNIQUE NOT NULL,
@@ -484,38 +928,44 @@ def init_db():
         verification_score INTEGER DEFAULT 0,
         verification_status TEXT DEFAULT 'pending'
     )""")
-    existing_recruiter_cols = [row[1] for row in conn.execute("PRAGMA table_info(recruiters)").fetchall()]
-    if 'website_title' not in existing_recruiter_cols:
+    existing_recruiter_cols = [
+        row[1] for row in conn.execute("PRAGMA table_info(recruiters)").fetchall()
+    ]
+    if "website_title" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN website_title TEXT")
-    if 'website_description' not in existing_recruiter_cols:
+    if "website_description" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN website_description TEXT")
-    if 'website_logo_url' not in existing_recruiter_cols:
+    if "website_logo_url" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN website_logo_url TEXT")
-    if 'description' not in existing_recruiter_cols:
+    if "description" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN description TEXT")
-    if 'industry' not in existing_recruiter_cols:
+    if "industry" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN industry TEXT")
-    if 'logo_url' not in existing_recruiter_cols:
+    if "logo_url" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN logo_url TEXT")
-    if 'social_links' not in existing_recruiter_cols:
+    if "social_links" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN social_links TEXT")
-    if 'company_website' not in existing_recruiter_cols:
+    if "company_website" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN company_website TEXT")
-    if 'company_email' not in existing_recruiter_cols:
+    if "company_email" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN company_email TEXT")
-    if 'company_phone' not in existing_recruiter_cols:
+    if "company_phone" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN company_phone TEXT")
-    if 'company_location' not in existing_recruiter_cols:
+    if "company_location" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN company_location TEXT")
-    if 'last_scrape_at' not in existing_recruiter_cols:
+    if "last_scrape_at" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN last_scrape_at TIMESTAMP")
-    if 'jobs_found_count' not in existing_recruiter_cols:
-        conn.execute("ALTER TABLE recruiters ADD COLUMN jobs_found_count INTEGER DEFAULT 0")
-    if 'scrape_status' not in existing_recruiter_cols:
-        conn.execute("ALTER TABLE recruiters ADD COLUMN scrape_status TEXT DEFAULT 'idle'")
-    if 'scrape_message' not in existing_recruiter_cols:
+    if "jobs_found_count" not in existing_recruiter_cols:
+        conn.execute(
+            "ALTER TABLE recruiters ADD COLUMN jobs_found_count INTEGER DEFAULT 0"
+        )
+    if "scrape_status" not in existing_recruiter_cols:
+        conn.execute(
+            "ALTER TABLE recruiters ADD COLUMN scrape_status TEXT DEFAULT 'idle'"
+        )
+    if "scrape_message" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN scrape_message TEXT")
-    if 'scrape_error' not in existing_recruiter_cols:
+    if "scrape_error" not in existing_recruiter_cols:
         conn.execute("ALTER TABLE recruiters ADD COLUMN scrape_error TEXT")
     cur.execute("""CREATE TABLE IF NOT EXISTS jobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -529,19 +979,23 @@ def init_db():
         status TEXT DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
-    existing_job_cols = [row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()]
-    if 'requirements' not in existing_job_cols:
+    existing_job_cols = [
+        row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+    ]
+    if "requirements" not in existing_job_cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN requirements TEXT")
-    if 'skills_required' not in existing_job_cols:
+    if "skills_required" not in existing_job_cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN skills_required TEXT")
-    if 'is_active' not in existing_job_cols:
+    if "is_active" not in existing_job_cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN is_active INTEGER DEFAULT 1")
-    if 'is_filled' not in existing_job_cols:
+    if "is_filled" not in existing_job_cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN is_filled INTEGER DEFAULT 0")
-    if 'updated_at' not in existing_job_cols:
+    if "updated_at" not in existing_job_cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN updated_at TIMESTAMP")
         # Migration: Set updated_at to current time for existing rows
-        conn.execute("UPDATE jobs SET updated_at = ? WHERE updated_at IS NULL", (datetime.now(),))
+        conn.execute(
+            "UPDATE jobs SET updated_at = ? WHERE updated_at IS NULL", (datetime.now(),)
+        )
 
     cur.execute("""CREATE TABLE IF NOT EXISTS job_recommendations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -551,8 +1005,12 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(job_id, student_id)
     )""")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_job_recommendations_job ON job_recommendations(job_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_job_recommendations_student ON job_recommendations(student_id)")
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_job_recommendations_job ON job_recommendations(job_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_job_recommendations_student ON job_recommendations(student_id)"
+    )
 
     cur.execute("""CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -563,7 +1021,7 @@ def init_db():
         read_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
-    
+
     cur.execute("""CREATE TABLE IF NOT EXISTS chatbot_conversations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -578,17 +1036,24 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
 
-    chatbot_conversation_cols = [row[1] for row in conn.execute("PRAGMA table_info(chatbot_conversations)").fetchall()]
-    if 'intent' not in chatbot_conversation_cols:
+    chatbot_conversation_cols = [
+        row[1]
+        for row in conn.execute("PRAGMA table_info(chatbot_conversations)").fetchall()
+    ]
+    if "intent" not in chatbot_conversation_cols:
         conn.execute("ALTER TABLE chatbot_conversations ADD COLUMN intent TEXT")
-    if 'confidence' not in chatbot_conversation_cols:
-        conn.execute("ALTER TABLE chatbot_conversations ADD COLUMN confidence REAL DEFAULT 0.0")
-    if 'session_id' not in chatbot_conversation_cols:
+    if "confidence" not in chatbot_conversation_cols:
+        conn.execute(
+            "ALTER TABLE chatbot_conversations ADD COLUMN confidence REAL DEFAULT 0.0"
+        )
+    if "session_id" not in chatbot_conversation_cols:
         conn.execute("ALTER TABLE chatbot_conversations ADD COLUMN session_id TEXT")
-    if 'metadata' not in chatbot_conversation_cols:
+    if "metadata" not in chatbot_conversation_cols:
         conn.execute("ALTER TABLE chatbot_conversations ADD COLUMN metadata TEXT")
-    if 'toxicity_flag' not in chatbot_conversation_cols:
-        conn.execute("ALTER TABLE chatbot_conversations ADD COLUMN toxicity_flag INTEGER DEFAULT 0")
+    if "toxicity_flag" not in chatbot_conversation_cols:
+        conn.execute(
+            "ALTER TABLE chatbot_conversations ADD COLUMN toxicity_flag INTEGER DEFAULT 0"
+        )
 
     cur.execute("""CREATE TABLE IF NOT EXISTS chatbot_memory (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -599,7 +1064,9 @@ def init_db():
         metadata TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_chatbot_memory_session ON chatbot_memory(session_id, created_at)")
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chatbot_memory_session ON chatbot_memory(session_id, created_at)"
+    )
 
     cur.execute("""CREATE TABLE IF NOT EXISTS chatbot_feedback (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -638,7 +1105,7 @@ def init_db():
         sent_to_all INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
-    
+
     cur.execute("""CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -647,7 +1114,7 @@ def init_db():
         link TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
-    
+
     # Create moderation flags table
     cur.execute("""CREATE TABLE IF NOT EXISTS moderation_flags (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -658,7 +1125,7 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         reviewed INTEGER DEFAULT 0
     )""")
-    
+
     # Create message requests table
     cur.execute("""CREATE TABLE IF NOT EXISTS message_requests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -669,7 +1136,7 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         responded_at TIMESTAMP
     )""")
-    
+
     # Create scraped jobs table
     cur.execute("""CREATE TABLE IF NOT EXISTS scraped_jobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -684,7 +1151,7 @@ def init_db():
         scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         status TEXT DEFAULT 'active'
     )""")
-    
+
     # Create results verification table
     cur.execute("""CREATE TABLE IF NOT EXISTS results_verifications (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -700,16 +1167,22 @@ def init_db():
         verified_at TIMESTAMP
     )""")
     # Ensure anchor_tx column exists to store blockchain tx hash (optional)
-    existing_results_cols = [row[1] for row in conn.execute("PRAGMA table_info(results_verifications)").fetchall()]
-    if 'anchor_tx' not in existing_results_cols:
+    existing_results_cols = [
+        row[1]
+        for row in conn.execute("PRAGMA table_info(results_verifications)").fetchall()
+    ]
+    if "anchor_tx" not in existing_results_cols:
         try:
             conn.execute("ALTER TABLE results_verifications ADD COLUMN anchor_tx TEXT")
         except Exception:
             pass
-    existing_results_cols = [row[1] for row in conn.execute("PRAGMA table_info(results_verifications)").fetchall()]
-    if 'result_type' not in existing_results_cols:
+    existing_results_cols = [
+        row[1]
+        for row in conn.execute("PRAGMA table_info(results_verifications)").fetchall()
+    ]
+    if "result_type" not in existing_results_cols:
         conn.execute("ALTER TABLE results_verifications ADD COLUMN result_type TEXT")
-    
+
     # Create session management table for 4-hour persistence
     cur.execute("""CREATE TABLE IF NOT EXISTS user_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -718,7 +1191,7 @@ def init_db():
         last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
-    
+
     # Create student academic records table
     cur.execute("""CREATE TABLE IF NOT EXISTS student_academic_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -735,7 +1208,7 @@ def init_db():
         verification_notes TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
-    
+
     # Create semester results table
     cur.execute("""CREATE TABLE IF NOT EXISTS semester_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -748,7 +1221,7 @@ def init_db():
         verified INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
-    
+
     # Create university programs table
     cur.execute("""CREATE TABLE IF NOT EXISTS university_programs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -792,10 +1265,12 @@ def init_db():
     )""")
 
     # Ensure student course summary is persisted when selected
-    existing_student_cols = [row[1] for row in conn.execute("PRAGMA table_info(students)").fetchall()]
-    if 'selected_courses' not in existing_student_cols:
+    existing_student_cols = [
+        row[1] for row in conn.execute("PRAGMA table_info(students)").fetchall()
+    ]
+    if "selected_courses" not in existing_student_cols:
         conn.execute("ALTER TABLE students ADD COLUMN selected_courses TEXT")
-    if 'anchor_tx' not in existing_student_cols:
+    if "anchor_tx" not in existing_student_cols:
         try:
             conn.execute("ALTER TABLE students ADD COLUMN anchor_tx TEXT")
         except Exception:
@@ -865,7 +1340,9 @@ def init_db():
         read_status INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at DESC)")
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at DESC)"
+    )
 
     # ========== ADVANCED CHAT SYSTEM TABLES ==========
     cur.execute("""CREATE TABLE IF NOT EXISTS admin_forwarded_chats (
@@ -914,53 +1391,118 @@ def init_db():
     )""")
 
     # ========== ADD MISSING COLUMNS IF NEEDED ==========
-    existing_chat_cols = [row[1] for row in conn.execute("PRAGMA table_info(chat_sessions)").fetchall()]
+    existing_chat_cols = [
+        row[1] for row in conn.execute("PRAGMA table_info(chat_sessions)").fetchall()
+    ]
     # Additional columns can be added here if needed
 
-    
     # Create indexes for better performance
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_sender_receiver ON messages(sender_id, receiver_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_job_interests_student ON job_interests(student_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_job_interests_job ON job_interests(job_id)")
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_sender_receiver ON messages(sender_id, receiver_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_job_interests_student ON job_interests(student_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_job_interests_job ON job_interests(job_id)"
+    )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_message_requests_sender ON message_requests(sender_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_message_requests_receiver ON message_requests(receiver_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_scraped_jobs_posted_date ON scraped_jobs(posted_date)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_results_verifications_student ON results_verifications(student_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_last_activity ON user_sessions(last_activity)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_student_academic_records_user ON student_academic_records(user_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_semester_results_user ON semester_results(user_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_university_programs_faculty ON university_programs(faculty)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_program_courses_program ON program_courses(program_name)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_student_courses_user ON student_courses(user_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_student_data_imports_user ON student_data_imports(user_id)")
-    
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_message_requests_sender ON message_requests(sender_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_message_requests_receiver ON message_requests(receiver_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_scraped_jobs_posted_date ON scraped_jobs(posted_date)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_results_verifications_student ON results_verifications(student_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_sessions_last_activity ON user_sessions(last_activity)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_student_academic_records_user ON student_academic_records(user_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semester_results_user ON semester_results(user_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_university_programs_faculty ON university_programs(faculty)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_program_courses_program ON program_courses(program_name)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_student_courses_user ON student_courses(user_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_student_data_imports_user ON student_data_imports(user_id)"
+    )
+
     # Indexes for new chat system
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_admin_forwarded_chats_user ON admin_forwarded_chats(user_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_admin_forwarded_chats_admin ON admin_forwarded_chats(admin_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_admin_forwarded_chats_status ON admin_forwarded_chats(status)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_friend_requests_sender ON friend_requests(sender_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_friend_requests_receiver ON friend_requests(receiver_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_friend_requests_status ON friend_requests(status)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_blocks_blocker ON chat_blocks(blocker_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_blocks_blocked ON chat_blocks(blocked_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_student_chat_messages_sender ON student_chat_messages(sender_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_student_chat_messages_receiver ON student_chat_messages(receiver_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_student_chat_messages_created ON student_chat_messages(created_at)")
-    
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_admin_forwarded_chats_user ON admin_forwarded_chats(user_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_admin_forwarded_chats_admin ON admin_forwarded_chats(admin_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_admin_forwarded_chats_status ON admin_forwarded_chats(status)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_friend_requests_sender ON friend_requests(sender_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_friend_requests_receiver ON friend_requests(receiver_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_friend_requests_status ON friend_requests(status)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_blocks_blocker ON chat_blocks(blocker_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_blocks_blocked ON chat_blocks(blocked_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_student_chat_messages_sender ON student_chat_messages(sender_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_student_chat_messages_receiver ON student_chat_messages(receiver_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_student_chat_messages_created ON student_chat_messages(created_at)"
+    )
+
     # Indexes for chat system
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_admin ON chat_sessions(admin_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at)")
-    
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_sessions_admin ON chat_sessions(admin_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at)"
+    )
+
     # Indexes for company system
     cur.execute("CREATE INDEX IF NOT EXISTS idx_companies_user ON companies(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(name)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_company_data_company ON company_data(company_id)")
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_company_data_company ON company_data(company_id)"
+    )
 
     cur.execute("""CREATE TABLE IF NOT EXISTS scraped_company_data (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -999,69 +1541,246 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(company_id) REFERENCES companies(id)
     )""")
-    
+
     conn.commit()
-    
+
     # Load university programs from prospectus
-    programs_exist = conn.execute("SELECT COUNT(*) FROM university_programs").fetchone()[0] > 0
+    programs_exist = (
+        conn.execute("SELECT COUNT(*) FROM university_programs").fetchone()[0] > 0
+    )
     if not programs_exist:
         programs = [
             # FACULTY OF DESIGN AND INNOVATION
-            ('FACULTY OF DESIGN AND INNOVATION', 'Fashion and Retailing', 'degree', '', '3 years'),
-            ('FACULTY OF DESIGN AND INNOVATION', 'Advertising', 'diploma', '', '2 years'),
-            ('FACULTY OF DESIGN AND INNOVATION', 'Graphic Design', 'diploma', '', '2 years'),
-            ('FACULTY OF DESIGN AND INNOVATION', 'Fashion and Apparel Design', 'diploma', '', '2 years'),
-            
+            (
+                "FACULTY OF DESIGN AND INNOVATION",
+                "Fashion and Retailing",
+                "degree",
+                "",
+                "3 years",
+            ),
+            (
+                "FACULTY OF DESIGN AND INNOVATION",
+                "Advertising",
+                "diploma",
+                "",
+                "2 years",
+            ),
+            (
+                "FACULTY OF DESIGN AND INNOVATION",
+                "Graphic Design",
+                "diploma",
+                "",
+                "2 years",
+            ),
+            (
+                "FACULTY OF DESIGN AND INNOVATION",
+                "Fashion and Apparel Design",
+                "diploma",
+                "",
+                "2 years",
+            ),
             # FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING
-            ('FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING', 'Professional Communication', 'degree', '', '3 years'),
-            ('FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING', 'Broadcasting & Journalism', 'degree', '', '3 years'),
-            ('FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING', 'Digital Film & Television', 'degree', '', '3 years'),
-            ('FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING', 'Television and Film Production', 'diploma', '', '2 years'),
-            ('FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING', 'Broadcasting (Radio and TV)', 'diploma', '', '2 years'),
-            ('FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING', 'Public Relations', 'diploma', '', '2 years'),
-            ('FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING', 'Journalism and Media', 'diploma', '', '2 years'),
-            
+            (
+                "FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING",
+                "Professional Communication",
+                "degree",
+                "",
+                "3 years",
+            ),
+            (
+                "FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING",
+                "Broadcasting & Journalism",
+                "degree",
+                "",
+                "3 years",
+            ),
+            (
+                "FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING",
+                "Digital Film & Television",
+                "degree",
+                "",
+                "3 years",
+            ),
+            (
+                "FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING",
+                "Television and Film Production",
+                "diploma",
+                "",
+                "2 years",
+            ),
+            (
+                "FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING",
+                "Broadcasting (Radio and TV)",
+                "diploma",
+                "",
+                "2 years",
+            ),
+            (
+                "FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING",
+                "Public Relations",
+                "diploma",
+                "",
+                "2 years",
+            ),
+            (
+                "FACULTY OF COMMUNICATION, MEDIA AND BROADCASTING",
+                "Journalism and Media",
+                "diploma",
+                "",
+                "2 years",
+            ),
             # FACULTY OF ARCHITECTURE AND THE BUILT ENVIRONMENT
-            ('FACULTY OF ARCHITECTURE AND THE BUILT ENVIRONMENT', 'Architectural Technology', 'diploma', '', '2 years'),
-            
+            (
+                "FACULTY OF ARCHITECTURE AND THE BUILT ENVIRONMENT",
+                "Architectural Technology",
+                "diploma",
+                "",
+                "2 years",
+            ),
             # FACULTY OF BUSINESS AND GLOBALIZATION
-            ('FACULTY OF BUSINESS AND GLOBALIZATION', 'International Business', 'degree', '', '3 years'),
-            ('FACULTY OF BUSINESS AND GLOBALIZATION', 'Entrepreneurship', 'degree', '', '3 years'),
-            ('FACULTY OF BUSINESS AND GLOBALIZATION', 'Human Resource Management', 'degree', '', '3 years'),
-            ('FACULTY OF BUSINESS AND GLOBALIZATION', 'Business Management', 'diploma', '', '2 years'),
-            ('FACULTY OF BUSINESS AND GLOBALIZATION', 'Retail Management', 'diploma', '', '2 years'),
-            ('FACULTY OF BUSINESS AND GLOBALIZATION', 'Marketing', 'diploma', '', '2 years'),
-            
+            (
+                "FACULTY OF BUSINESS AND GLOBALIZATION",
+                "International Business",
+                "degree",
+                "",
+                "3 years",
+            ),
+            (
+                "FACULTY OF BUSINESS AND GLOBALIZATION",
+                "Entrepreneurship",
+                "degree",
+                "",
+                "3 years",
+            ),
+            (
+                "FACULTY OF BUSINESS AND GLOBALIZATION",
+                "Human Resource Management",
+                "degree",
+                "",
+                "3 years",
+            ),
+            (
+                "FACULTY OF BUSINESS AND GLOBALIZATION",
+                "Business Management",
+                "diploma",
+                "",
+                "2 years",
+            ),
+            (
+                "FACULTY OF BUSINESS AND GLOBALIZATION",
+                "Retail Management",
+                "diploma",
+                "",
+                "2 years",
+            ),
+            (
+                "FACULTY OF BUSINESS AND GLOBALIZATION",
+                "Marketing",
+                "diploma",
+                "",
+                "2 years",
+            ),
             # FACULTY OF CREATIVITY IN TOURISM AND HOSPITALITY
-            ('FACULTY OF CREATIVITY IN TOURISM AND HOSPITALITY', 'Tourism Management', 'degree', '', '3 years'),
-            ('FACULTY OF CREATIVITY IN TOURISM AND HOSPITALITY', 'International Tourism', 'diploma', '', '2 years'),
-            ('FACULTY OF CREATIVITY IN TOURISM AND HOSPITALITY', 'Tourism Management', 'diploma', '', '2 years'),
-            ('FACULTY OF CREATIVITY IN TOURISM AND HOSPITALITY', 'Events Management', 'diploma', '', '2 years'),
-            
+            (
+                "FACULTY OF CREATIVITY IN TOURISM AND HOSPITALITY",
+                "Tourism Management",
+                "degree",
+                "",
+                "3 years",
+            ),
+            (
+                "FACULTY OF CREATIVITY IN TOURISM AND HOSPITALITY",
+                "International Tourism",
+                "diploma",
+                "",
+                "2 years",
+            ),
+            (
+                "FACULTY OF CREATIVITY IN TOURISM AND HOSPITALITY",
+                "Tourism Management",
+                "diploma",
+                "",
+                "2 years",
+            ),
+            (
+                "FACULTY OF CREATIVITY IN TOURISM AND HOSPITALITY",
+                "Events Management",
+                "diploma",
+                "",
+                "2 years",
+            ),
             # FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY
-            ('FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY', 'Software Engineering with Multimedia', 'degree', '', '3 years'),
-            ('FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY', 'Business Information Technology', 'degree', '', '3 years'),
-            ('FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY', 'Information Technology', 'degree', '', '3 years'),
-            ('FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY', 'Multimedia and Software Engineering', 'diploma', '', '2 years'),
-            ('FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY', 'Business Information Technology', 'diploma', '', '2 years'),
-            ('FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY', 'Information Technology', 'diploma', '', '2 years'),
+            (
+                "FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY",
+                "Software Engineering with Multimedia",
+                "degree",
+                "",
+                "3 years",
+            ),
+            (
+                "FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY",
+                "Business Information Technology",
+                "degree",
+                "",
+                "3 years",
+            ),
+            (
+                "FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY",
+                "Information Technology",
+                "degree",
+                "",
+                "3 years",
+            ),
+            (
+                "FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY",
+                "Multimedia and Software Engineering",
+                "diploma",
+                "",
+                "2 years",
+            ),
+            (
+                "FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY",
+                "Business Information Technology",
+                "diploma",
+                "",
+                "2 years",
+            ),
+            (
+                "FACULTY OF INFORMATION AND COMMUNICATION TECHNOLOGY",
+                "Information Technology",
+                "diploma",
+                "",
+                "2 years",
+            ),
         ]
-        
+
         for faculty, program_name, program_type, requirements, duration in programs:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO university_programs (faculty, program_name, program_type, entry_requirements, duration)
                 VALUES (?, ?, ?, ?, ?)
-            """, (faculty, program_name, program_type, requirements, duration))
+            """,
+                (faculty, program_name, program_type, requirements, duration),
+            )
         conn.commit()
-    
+
     conn.close()
 
     # Default Admin
     conn = get_db()
     cur = conn.cursor()
-    if not cur.execute("SELECT 1 FROM users WHERE email = 'admin@portal.co.ls'").fetchone():
-        cur.execute("INSERT INTO users (name, email, password_hash, role) VALUES (?,?,?,?)",
-                    ("System Admin", "admin@portal.co.ls", generate_password_hash("admin123"), "admin"))
+    if not cur.execute(
+        "SELECT 1 FROM users WHERE email = 'admin@portal.co.ls'"
+    ).fetchone():
+        cur.execute(
+            "INSERT INTO users (name, email, password_hash, role) VALUES (?,?,?,?)",
+            (
+                "System Admin",
+                "admin@portal.co.ls",
+                generate_password_hash("admin123"),
+                "admin",
+            ),
+        )
         conn.commit()
     conn.close()
 
@@ -1076,12 +1795,12 @@ def load_program_course_catalog():
             conn.close()
             return
 
-        source_path = os.path.join(BASE_DIR, 'course_data.json')
+        source_path = os.path.join(BASE_DIR, "course_data.json")
         if not os.path.exists(source_path):
             conn.close()
             return
 
-        with open(source_path, 'r', encoding='utf-8') as f:
+        with open(source_path, "r", encoding="utf-8") as f:
             catalog = json.load(f)
 
         insert_query = """
@@ -1089,11 +1808,14 @@ def load_program_course_catalog():
             VALUES (?, ?, ?, ?)
         """
         for program_name, program_data in catalog.items():
-            faculty = program_data.get('faculty')
-            semesters = program_data.get('semesters', {})
+            faculty = program_data.get("faculty")
+            semesters = program_data.get("semesters", {})
             for semester, courses in semesters.items():
                 for course_name in courses:
-                    cur.execute(insert_query, (faculty, program_name, int(semester), course_name))
+                    cur.execute(
+                        insert_query,
+                        (faculty, program_name, int(semester), course_name),
+                    )
         conn.commit()
     except Exception as e:
         print(f"Error loading program course catalog: {e}")
@@ -1104,7 +1826,24 @@ def load_program_course_catalog():
             pass
 
 
-init_db()
+for init_attempt in range(5):
+    try:
+        init_db()
+        break
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e).lower() and init_attempt < 4:
+            logger.warning(
+                "Database init attempt %s failed because the database is locked. Retrying...",
+                init_attempt + 1,
+            )
+            time.sleep(1)
+            continue
+        if "database is locked" in str(e).lower():
+            logger.warning(
+                "Database init skipped because the database is locked: %s", e
+            )
+            break
+        raise
 chatbot_engine = ChatbotEngine()
 load_program_course_catalog()
 
@@ -1115,21 +1854,23 @@ except Exception as e:
     print(f"SQLAlchemy init skipped or failed: {e}")
 
 
-def fetch_from_university_portal(student_id, portal_url=None, password=None, audit_user_id=None):
+def fetch_from_university_portal(
+    student_id, portal_url=None, password=None, audit_user_id=None
+):
     # Attempt to fetch real data from a student portal. Heuristics only; may require custom selectors for your portal.
-    sid = (student_id or '').upper()
+    sid = (student_id or "").upper()
     if not portal_url:
-        portal_url = os.environ.get('UNIVERSITY_PORTAL_URL')
+        portal_url = os.environ.get("UNIVERSITY_PORTAL_URL")
     if not portal_url:
-        print('Portal fetch aborted: no UNIVERSITY_PORTAL_URL configured')
+        print("Portal fetch aborted: no UNIVERSITY_PORTAL_URL configured")
         return None
     result = {
-        'student_id': sid,
-        'name': None,
-        'course': None,
-        'faculty': None,
-        'gpa': None,
-        'graduation_year': None
+        "student_id": sid,
+        "name": None,
+        "course": None,
+        "faculty": None,
+        "gpa": None,
+        "graduation_year": None,
     }
 
     if not portal_url:
@@ -1143,7 +1884,7 @@ def fetch_from_university_portal(student_id, portal_url=None, password=None, aud
             print("Portal fetch aborted: invalid hostname")
             return None
         # Require HTTPS
-        if parsed.scheme.lower() != 'https':
+        if parsed.scheme.lower() != "https":
             print("Portal fetch aborted: only HTTPS endpoints are allowed")
             return None
     except Exception:
@@ -1152,11 +1893,12 @@ def fetch_from_university_portal(student_id, portal_url=None, password=None, aud
 
     # Allowlist hosts - tighten this list to trusted portals only
     ALLOWED_PORTAL_HOSTS = {"portal.co.ls", "www.portal.co.ls"}
+
     def hostname_allowed(h):
         try:
             h_l = h.lower()
             for a in ALLOWED_PORTAL_HOSTS:
-                if h_l == a or h_l.endswith('.' + a):
+                if h_l == a or h_l.endswith("." + a):
                     return True
             return False
         except Exception:
@@ -1174,7 +1916,13 @@ def fetch_from_university_portal(student_id, portal_url=None, password=None, aud
                 ip = info[4][0]
                 try:
                     ip_obj = ipaddress.ip_address(ip)
-                    if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_multicast or ip_obj.is_reserved or ip_obj.is_link_local:
+                    if (
+                        ip_obj.is_private
+                        or ip_obj.is_loopback
+                        or ip_obj.is_multicast
+                        or ip_obj.is_reserved
+                        or ip_obj.is_link_local
+                    ):
                         return True
                 except Exception:
                     # if parsing fails, be conservative and treat as private
@@ -1185,37 +1933,57 @@ def fetch_from_university_portal(student_id, portal_url=None, password=None, aud
             return True
 
     if resolves_to_private(hostname):
-        print(f"Portal fetch aborted: hostname '{hostname}' resolves to private/reserved address")
+        print(
+            f"Portal fetch aborted: hostname '{hostname}' resolves to private/reserved address"
+        )
         return None
 
     try:
         session_req = requests.Session()
         # reduce redirects and require TLS verification
         session_req.max_redirects = 5
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        headers = {"User-Agent": "Mozilla/5.0"}
 
         # First try: attempt a login POST if password provided
         login_tried = False
         if password:
             login_tried = True
             try:
-                post_data = {'student_id': student_id, 'password': password}
-                session_req.post(portal_url, data=post_data, headers=headers, timeout=10)
+                post_data = {"student_id": student_id, "password": password}
+                session_req.post(
+                    portal_url, data=post_data, headers=headers, timeout=10
+                )
             except Exception:
                 # try posting to /login
                 try:
-                    session_req.post(urljoin(portal_url, '/login'), data=post_data, headers=headers, timeout=10)
+                    session_req.post(
+                        urljoin(portal_url, "/login"),
+                        data=post_data,
+                        headers=headers,
+                        timeout=10,
+                    )
                 except Exception:
                     pass
 
         # Then try to fetch a profile-like page
-        profile_urls = [portal_url, urljoin(portal_url, '/profile'), urljoin(portal_url, f'/students/{sid}'), urljoin(portal_url, f'/student/{sid}')]
+        profile_urls = [
+            portal_url,
+            urljoin(portal_url, "/profile"),
+            urljoin(portal_url, f"/students/{sid}"),
+            urljoin(portal_url, f"/student/{sid}"),
+        ]
         html = None
         for pu in profile_urls:
             try:
-                r = session_req.get(pu, headers=headers, timeout=10, allow_redirects=True, verify=True)
+                r = session_req.get(
+                    pu, headers=headers, timeout=10, allow_redirects=True, verify=True
+                )
                 # Reject very large responses to avoid memory exhaustion
-                if r.status_code == 200 and len(r.content) > 100 and len(r.content) < 500000:
+                if (
+                    r.status_code == 200
+                    and len(r.content) > 100
+                    and len(r.content) < 500000
+                ):
                     html = r.text
                     break
                 else:
@@ -1234,37 +2002,45 @@ def fetch_from_university_portal(student_id, portal_url=None, password=None, aud
         try:
             data_json = json.loads(html)
             # Map and whitelist expected keys only
-            result['name'] = data_json.get('name') or data_json.get('fullName') or data_json.get('studentName')
-            result['course'] = data_json.get('course') or data_json.get('program')
-            result['faculty'] = data_json.get('faculty') or data_json.get('department')
+            result["name"] = (
+                data_json.get("name")
+                or data_json.get("fullName")
+                or data_json.get("studentName")
+            )
+            result["course"] = data_json.get("course") or data_json.get("program")
+            result["faculty"] = data_json.get("faculty") or data_json.get("department")
             # Cast/validate numeric types
             try:
-                result['gpa'] = float(data_json.get('gpa')) if data_json.get('gpa') is not None else None
+                result["gpa"] = (
+                    float(data_json.get("gpa"))
+                    if data_json.get("gpa") is not None
+                    else None
+                )
             except Exception:
-                result['gpa'] = None
+                result["gpa"] = None
             try:
-                gy = data_json.get('graduation_year') or data_json.get('graduationYear')
-                result['graduation_year'] = int(gy) if gy else None
+                gy = data_json.get("graduation_year") or data_json.get("graduationYear")
+                result["graduation_year"] = int(gy) if gy else None
             except Exception:
-                result['graduation_year'] = None
+                result["graduation_year"] = None
             # Sanitize strings if bleach is available
             if bleach:
-                for k in ['name', 'course', 'faculty']:
+                for k in ["name", "course", "faculty"]:
                     if result.get(k):
                         result[k] = bleach.clean(str(result[k]))
             return result
         except Exception:
             pass
 
-        soup = BeautifulSoup(html, 'html.parser')
+        soup = BeautifulSoup(html, "html.parser")
 
         # Heuristics: look for labels and nearby text
-        text = soup.get_text(separator='|')
+        text = soup.get_text(separator="|")
         text_l = text.lower()
 
         # Name
         name_tag = None
-        for sel in ['#student-name', '.student-name', 'h1', 'h2', 'title']:
+        for sel in ["#student-name", ".student-name", "h1", "h2", "title"]:
             t = soup.select_one(sel)
             if t and t.get_text(strip=True):
                 name_tag = t.get_text(strip=True)
@@ -1274,52 +2050,56 @@ def fetch_from_university_portal(student_id, portal_url=None, password=None, aud
             m = re.search(r"([A-Z]{1,2}\d{3,6})", text)
             if m:
                 # try to find surrounding name
-                parts = text.split('|')
-                for i,p in enumerate(parts):
+                parts = text.split("|")
+                for i, p in enumerate(parts):
                     if sid in p:
-                        if i>0:
-                            name_tag = parts[i-1].strip()
+                        if i > 0:
+                            name_tag = parts[i - 1].strip()
                             break
         if name_tag:
-            result['name'] = name_tag
+            result["name"] = name_tag
 
         # Course/faculty/gpa/graduation by keyword
         # Course
-        m = re.search(r'course[:\s]*([A-Za-z0-9 &/\-]+)', text, re.IGNORECASE)
+        m = re.search(r"course[:\s]*([A-Za-z0-9 &/\-]+)", text, re.IGNORECASE)
         if m:
-            result['course'] = m.group(1).strip()
+            result["course"] = m.group(1).strip()
         else:
             # try common labels
-            for lbl in ['program', 'degree', 'course of study', 'study']:
+            for lbl in ["program", "degree", "course of study", "study"]:
                 if lbl in text_l:
-                    seg = re.search(rf"{lbl}[:\s]*([A-Za-z0-9 &/\-]+)", text, re.IGNORECASE)
+                    seg = re.search(
+                        rf"{lbl}[:\s]*([A-Za-z0-9 &/\-]+)", text, re.IGNORECASE
+                    )
                     if seg:
-                        result['course'] = seg.group(1).strip()
+                        result["course"] = seg.group(1).strip()
                         break
 
         # Faculty/department
-        m = re.search(r'(faculty|department)[:\s]*([A-Za-z &]+)', text, re.IGNORECASE)
+        m = re.search(r"(faculty|department)[:\s]*([A-Za-z &]+)", text, re.IGNORECASE)
         if m:
-            result['faculty'] = m.group(2).strip()
+            result["faculty"] = m.group(2).strip()
 
         # GPA
-        m = re.search(r'gpa[:\s]*([0-4]\.?\d{0,2})', text, re.IGNORECASE)
+        m = re.search(r"gpa[:\s]*([0-4]\.?\d{0,2})", text, re.IGNORECASE)
         if m:
             try:
-                result['gpa'] = float(m.group(1))
+                result["gpa"] = float(m.group(1))
             except Exception:
                 pass
 
         # Graduation year
-        m = re.search(r'(graduat(e|ion) year|class of)[:\s]*(20\d{2})', text, re.IGNORECASE)
+        m = re.search(
+            r"(graduat(e|ion) year|class of)[:\s]*(20\d{2})", text, re.IGNORECASE
+        )
         if m:
             try:
-                result['graduation_year'] = int(m.group(3))
+                result["graduation_year"] = int(m.group(3))
             except Exception:
                 pass
 
         # Ensure at least a name or course found
-        if not result['name'] and not result['course']:
+        if not result["name"] and not result["course"]:
             return None
 
         # Audit import into student_data_imports (avoid storing raw HTML)
@@ -1327,9 +2107,13 @@ def fetch_from_university_portal(student_id, portal_url=None, password=None, aud
             conn = get_db()
             cur = conn.cursor()
             audit_json = json.dumps(result)
-            user_id = audit_user_id or (session.get('user_id') if session and session.get('user_id') else 0)
-            cur.execute("INSERT INTO student_data_imports (user_id, student_id, portal_url, data_json, status) VALUES (?, ?, ?, ?, ?)",
-                        (user_id, sid, portal_url, audit_json, 'fetched'))
+            user_id = audit_user_id or (
+                session.get("user_id") if session and session.get("user_id") else 0
+            )
+            cur.execute(
+                "INSERT INTO student_data_imports (user_id, student_id, portal_url, data_json, status) VALUES (?, ?, ?, ?, ?)",
+                (user_id, sid, portal_url, audit_json, "fetched"),
+            )
             conn.commit()
             conn.close()
         except Exception as e:
@@ -1340,93 +2124,142 @@ def fetch_from_university_portal(student_id, portal_url=None, password=None, aud
         print(f"Portal fetch error: {e}")
         return None
 
+
 # ===================== WEBSITE METADATA EXTRACTION =====================
+
 
 def extract_website_metadata(company_url):
     """Extract website metadata from a company URL."""
     metadata = {
-        'title': None,
-        'description': None,
-        'logo_url': None,
-        'industry': None,
-        'contact_email': None,
-        'phone': None,
-        'social_links': [],
-        'recent_updates': []
+        "title": None,
+        "description": None,
+        "logo_url": None,
+        "industry": None,
+        "contact_email": None,
+        "phone": None,
+        "social_links": [],
+        "recent_updates": [],
     }
     try:
-        response = requests.get(company_url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
+        response = requests.get(
+            company_url,
+            timeout=10,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+        )
         if response.status_code != 200:
             return metadata
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = BeautifulSoup(response.text, "html.parser")
 
         if soup.title and soup.title.string:
-            metadata['title'] = soup.title.string.strip()
+            metadata["title"] = soup.title.string.strip()
 
-        description_tag = soup.find('meta', attrs={'name': 'description'}) or soup.find('meta', attrs={'property': 'og:description'})
-        if description_tag and description_tag.get('content'):
-            metadata['description'] = description_tag['content'].strip()
+        description_tag = soup.find("meta", attrs={"name": "description"}) or soup.find(
+            "meta", attrs={"property": "og:description"}
+        )
+        if description_tag and description_tag.get("content"):
+            metadata["description"] = description_tag["content"].strip()
 
-        logo_tag = soup.find('meta', attrs={'property': 'og:image'}) or soup.find('link', attrs={'rel': 'shortcut icon'}) or soup.find('link', attrs={'rel': 'icon'})
+        logo_tag = (
+            soup.find("meta", attrs={"property": "og:image"})
+            or soup.find("link", attrs={"rel": "shortcut icon"})
+            or soup.find("link", attrs={"rel": "icon"})
+        )
         if logo_tag:
-            url_value = logo_tag.get('content') or logo_tag.get('href')
+            url_value = logo_tag.get("content") or logo_tag.get("href")
             if url_value:
-                metadata['logo_url'] = urljoin(company_url, url_value.strip())
+                metadata["logo_url"] = urljoin(company_url, url_value.strip())
 
-        email_match = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", response.text)
+        email_match = re.search(
+            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", response.text
+        )
         if email_match:
-            metadata['contact_email'] = email_match.group(0)
+            metadata["contact_email"] = email_match.group(0)
 
         phone_match = re.search(r"\+?\d[\d\s()\-]{7,}\d", response.text)
         if phone_match:
-            metadata['phone'] = phone_match.group(0).strip()
+            metadata["phone"] = phone_match.group(0).strip()
 
-        metadata['social_links'] = extract_social_links(company_url)
+        metadata["social_links"] = extract_social_links(company_url)
 
         recent_links = []
-        for a in soup.find_all('a', href=True)[:30]:
-            text = a.get_text(' ', strip=True)
-            href = a['href'].strip()
-            if any(keyword in (text.lower() + ' ' + href.lower()) for keyword in ['news', 'blog', 'update', 'press', 'story']):
-                recent_links.append({'title': text or 'Latest update', 'url': urljoin(company_url, href)})
-        metadata['recent_updates'] = recent_links[:5]
+        for a in soup.find_all("a", href=True)[:30]:
+            text = a.get_text(" ", strip=True)
+            href = a["href"].strip()
+            if any(
+                keyword in (text.lower() + " " + href.lower())
+                for keyword in ["news", "blog", "update", "press", "story"]
+            ):
+                recent_links.append(
+                    {
+                        "title": text or "Latest update",
+                        "url": urljoin(company_url, href),
+                    }
+                )
+        metadata["recent_updates"] = recent_links[:5]
 
         # Try to infer company industry from keywords or structured data
-        industry_tag = soup.find('meta', attrs={'name': 'industry'}) or soup.find('meta', attrs={'property': 'industry'})
-        if industry_tag and industry_tag.get('content'):
-            metadata['industry'] = industry_tag['content'].strip()
+        industry_tag = soup.find("meta", attrs={"name": "industry"}) or soup.find(
+            "meta", attrs={"property": "industry"}
+        )
+        if industry_tag and industry_tag.get("content"):
+            metadata["industry"] = industry_tag["content"].strip()
         else:
-            text_body = (soup.get_text(separator=' ') or '').lower()
+            text_body = (soup.get_text(separator=" ") or "").lower()
             industry_keywords = {
-                'technology': ['software', 'tech', 'technology', 'digital', 'it', 'cloud', 'saas'],
-                'finance': ['finance', 'bank', 'insurance', 'fintech', 'investment'],
-                'education': ['education', 'school', 'university', 'learning', 'training'],
-                'healthcare': ['health', 'medical', 'clinic', 'hospital', 'pharma'],
-                'manufacturing': ['manufacturing', 'factory', 'industrial', 'production'],
-                'consulting': ['consulting', 'business advisory', 'services', 'consultant'],
-                'marketing': ['marketing', 'advertising', 'branding', 'creative'],
-                'logistics': ['logistics', 'transport', 'shipping', 'supply chain']
+                "technology": [
+                    "software",
+                    "tech",
+                    "technology",
+                    "digital",
+                    "it",
+                    "cloud",
+                    "saas",
+                ],
+                "finance": ["finance", "bank", "insurance", "fintech", "investment"],
+                "education": [
+                    "education",
+                    "school",
+                    "university",
+                    "learning",
+                    "training",
+                ],
+                "healthcare": ["health", "medical", "clinic", "hospital", "pharma"],
+                "manufacturing": [
+                    "manufacturing",
+                    "factory",
+                    "industrial",
+                    "production",
+                ],
+                "consulting": [
+                    "consulting",
+                    "business advisory",
+                    "services",
+                    "consultant",
+                ],
+                "marketing": ["marketing", "advertising", "branding", "creative"],
+                "logistics": ["logistics", "transport", "shipping", "supply chain"],
             }
             for industry, keywords in industry_keywords.items():
                 if any(keyword in text_body for keyword in keywords):
-                    metadata['industry'] = industry.title()
+                    metadata["industry"] = industry.title()
                     break
 
-        if not metadata['description']:
-            ld_json = soup.find('script', type='application/ld+json')
+        if not metadata["description"]:
+            ld_json = soup.find("script", type="application/ld+json")
             if ld_json and ld_json.string:
                 try:
                     import json
+
                     data = json.loads(ld_json.string)
-                    if isinstance(data, dict) and 'description' in data:
-                        metadata['description'] = data['description'].strip()
+                    if isinstance(data, dict) and "description" in data:
+                        metadata["description"] = data["description"].strip()
                     elif isinstance(data, list):
                         for item in data:
-                            if isinstance(item, dict) and 'description' in item:
-                                metadata['description'] = item['description'].strip()
+                            if isinstance(item, dict) and "description" in item:
+                                metadata["description"] = item["description"].strip()
                                 break
                 except Exception:
                     pass
@@ -1440,21 +2273,33 @@ def extract_social_links(company_url):
     """Extract social media links from a company website."""
     social_links = []
     try:
-        response = requests.get(company_url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
+        response = requests.get(
+            company_url,
+            timeout=10,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+        )
         if response.status_code != 200:
             return social_links
 
-        soup = BeautifulSoup(response.text, 'html.parser')
-        domains = ['linkedin.com', 'facebook.com', 'twitter.com', 'instagram.com', 'youtube.com', 't.me', 'github.com']
-        anchors = soup.find_all('a', href=True)
+        soup = BeautifulSoup(response.text, "html.parser")
+        domains = [
+            "linkedin.com",
+            "facebook.com",
+            "twitter.com",
+            "instagram.com",
+            "youtube.com",
+            "t.me",
+            "github.com",
+        ]
+        anchors = soup.find_all("a", href=True)
         found = set()
         for a in anchors:
-            href = a['href'].strip()
+            href = a["href"].strip()
             if any(domain in href for domain in domains):
                 full_url = href
-                if href.startswith('/'):
+                if href.startswith("/"):
                     full_url = urljoin(company_url, href)
                 if full_url not in found:
                     found.add(full_url)
@@ -1467,70 +2312,143 @@ def extract_social_links(company_url):
 def get_company_scrape_snapshot(company_id):
     """Return cached website metadata for a company, refreshing every 24 hours."""
     conn = get_db()
-    company = conn.execute("SELECT * FROM companies WHERE id = ?", (company_id,)).fetchone()
+    company = conn.execute(
+        "SELECT * FROM companies WHERE id = ?", (company_id,)
+    ).fetchone()
     if not company:
         conn.close()
         return None
 
-    latest = conn.execute("""
+    latest = conn.execute(
+        """
         SELECT * FROM company_data
         WHERE company_id = ?
         ORDER BY last_fetched DESC LIMIT 5
-    """, (company_id,)).fetchall()
+    """,
+        (company_id,),
+    ).fetchall()
 
-    needs_refresh = not latest or any(
-        (datetime.utcnow() - row['last_fetched']).total_seconds() > 60 * 60 * 24
-        for row in latest
-    )
+    needs_refresh = not latest
+    if not needs_refresh:
+        for row in latest:
+            last_fetched = row["last_fetched"]
+            if isinstance(last_fetched, str):
+                last_fetched = datetime.fromisoformat(last_fetched)
+            if (datetime.utcnow() - last_fetched).total_seconds() > 60 * 60 * 24:
+                needs_refresh = True
+                break
 
     snapshot = {
-        'company': company,
-        'website': None,
-        'linkedin': None,
-        'social_links': [],
-        'recent_updates': [],
-        'contact_email': None,
-        'phone': None,
-        'description': company['description'] or 'No description provided yet.',
-        'logo_url': company['logo_url']
+        "company": company,
+        "website": None,
+        "linkedin": None,
+        "title": None,
+        "industry": company["industry"],
+        "social_links": [],
+        "recent_updates": [],
+        "contact_email": None,
+        "phone": None,
+        "description": company["description"] or "No description provided yet.",
+        "logo_url": company["logo_url"],
+        "website_source": company["website_url"],
+        "linkedin_source": company["linkedin_url"],
     }
 
-    if needs_refresh and company['website_url']:
-        try:
-            website_metadata = extract_website_metadata(company['website_url'])
-            snapshot.update({
-                'website': website_metadata,
-                'description': website_metadata.get('description') or snapshot['description'],
-                'logo_url': website_metadata.get('logo_url') or snapshot['logo_url'],
-                'contact_email': website_metadata.get('contact_email'),
-                'phone': website_metadata.get('phone'),
-                'social_links': website_metadata.get('social_links', []) or snapshot['social_links'],
-                'recent_updates': website_metadata.get('recent_updates', []) or snapshot['recent_updates']
-            })
-            conn.execute("""
-                INSERT OR REPLACE INTO company_data (company_id, data_type, fetched_data, last_fetched, fetch_status)
-                VALUES (?, 'website', ?, CURRENT_TIMESTAMP, 'success')
-            """, (company_id, json.dumps(website_metadata)))
-        except Exception:
-            pass
+    if needs_refresh:
+        if company["website_url"]:
+            try:
+                website_metadata = extract_website_metadata(company["website_url"])
+                snapshot.update(
+                    {
+                        "website": website_metadata,
+                        "title": website_metadata.get("title") or snapshot["title"],
+                        "description": website_metadata.get("description")
+                        or snapshot["description"],
+                        "logo_url": website_metadata.get("logo_url")
+                        or snapshot["logo_url"],
+                        "contact_email": website_metadata.get("contact_email"),
+                        "phone": website_metadata.get("phone"),
+                        "industry": website_metadata.get("industry")
+                        or snapshot["industry"],
+                        "social_links": website_metadata.get("social_links", [])
+                        or snapshot["social_links"],
+                        "recent_updates": website_metadata.get("recent_updates", [])
+                        or snapshot["recent_updates"],
+                    }
+                )
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO company_data (company_id, data_type, fetched_data, last_fetched, fetch_status)
+                    VALUES (?, 'website', ?, CURRENT_TIMESTAMP, 'success')
+                """,
+                    (company_id, json.dumps(website_metadata)),
+                )
+            except Exception:
+                pass
+
+        if company["linkedin_url"]:
+            try:
+                linkedin_metadata = extract_website_metadata(company["linkedin_url"])
+                snapshot["linkedin"] = linkedin_metadata
+                if linkedin_metadata:
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO company_data (company_id, data_type, fetched_data, last_fetched, fetch_status)
+                        VALUES (?, 'linkedin', ?, CURRENT_TIMESTAMP, 'success')
+                    """,
+                        (company_id, json.dumps(linkedin_metadata)),
+                    )
+            except Exception:
+                pass
+
+        latest = conn.execute(
+            """
+            SELECT * FROM company_data
+            WHERE company_id = ?
+            ORDER BY last_fetched DESC LIMIT 5
+        """,
+            (company_id,),
+        ).fetchall()
 
     for row in latest:
         try:
-            data = json.loads(row['fetched_data']) if row['fetched_data'] else {}
-            if row['data_type'] == 'website':
-                snapshot['website'] = data
-                if data.get('description'):
-                    snapshot['description'] = data['description']
-                if data.get('logo_url'):
-                    snapshot['logo_url'] = data['logo_url']
-                if data.get('contact_email'):
-                    snapshot['contact_email'] = data['contact_email']
-                if data.get('phone'):
-                    snapshot['phone'] = data['phone']
-                if data.get('social_links'):
-                    snapshot['social_links'] = data['social_links']
-                if data.get('recent_updates'):
-                    snapshot['recent_updates'] = data['recent_updates']
+            data = json.loads(row["fetched_data"]) if row["fetched_data"] else {}
+            if row["data_type"] == "website":
+                snapshot["website"] = data
+                if data.get("title"):
+                    snapshot["title"] = snapshot["title"] or data["title"]
+                if data.get("description"):
+                    snapshot["description"] = data["description"]
+                if data.get("logo_url"):
+                    snapshot["logo_url"] = data["logo_url"]
+                if data.get("contact_email"):
+                    snapshot["contact_email"] = data["contact_email"]
+                if data.get("phone"):
+                    snapshot["phone"] = data["phone"]
+                if data.get("industry"):
+                    snapshot["industry"] = data["industry"]
+                if data.get("social_links"):
+                    snapshot["social_links"] = data["social_links"]
+                if data.get("recent_updates"):
+                    snapshot["recent_updates"] = data["recent_updates"]
+            elif row["data_type"] == "linkedin":
+                snapshot["linkedin"] = data
+                if not snapshot["title"] and data.get("title"):
+                    snapshot["title"] = data["title"]
+                if not snapshot["description"] and data.get("description"):
+                    snapshot["description"] = data["description"]
+                if not snapshot["contact_email"] and data.get("contact_email"):
+                    snapshot["contact_email"] = data["contact_email"]
+                if not snapshot["phone"] and data.get("phone"):
+                    snapshot["phone"] = data["phone"]
+                if data.get("industry") and not snapshot["industry"]:
+                    snapshot["industry"] = data["industry"]
+                if data.get("social_links"):
+                    current_links = set(snapshot["social_links"])
+                    for link in data["social_links"]:
+                        if link not in current_links:
+                            snapshot["social_links"].append(link)
+                            current_links.add(link)
         except Exception:
             continue
 
@@ -1539,15 +2457,20 @@ def get_company_scrape_snapshot(company_id):
     return snapshot
 
 
-def create_notification_for_user(user_id, title, message, link=None, notification_type='system', icon='fas fa-bell'):
+def create_notification_for_user(
+    user_id, title, message, link=None, notification_type="system", icon="fas fa-bell"
+):
     if not user_id:
         return None
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("""
+    cur.execute(
+        """
         INSERT INTO notifications (user_id, title, message, link, type, icon, read_status, created_at)
         VALUES (?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
-    """, (user_id, title, message, link, notification_type, icon))
+    """,
+        (user_id, title, message, link, notification_type, icon),
+    )
     conn.commit()
     conn.close()
     return True
@@ -1555,14 +2478,30 @@ def create_notification_for_user(user_id, title, message, link=None, notificatio
 
 def generate_recruiter_matches(recruiter_id, top_n=6):
     conn = get_db()
-    recruiter = conn.execute("SELECT * FROM recruiters WHERE id = ?", (recruiter_id,)).fetchone()
+    recruiter = conn.execute(
+        "SELECT * FROM recruiters WHERE id = ?", (recruiter_id,)
+    ).fetchone()
     if not recruiter:
         conn.close()
         return []
 
-    recruiter_keywords = set(re.findall(r"[A-Za-z0-9+#]+", ' '.join(filter(None, [
-        recruiter['company_name'], recruiter['industry'], recruiter['description'], recruiter['website_title'], recruiter['website_description']
-    ])) .lower()))
+    recruiter_keywords = set(
+        re.findall(
+            r"[A-Za-z0-9+#]+",
+            " ".join(
+                filter(
+                    None,
+                    [
+                        recruiter["company_name"],
+                        recruiter["industry"],
+                        recruiter["description"],
+                        recruiter["website_title"],
+                        recruiter["website_description"],
+                    ],
+                )
+            ).lower(),
+        )
+    )
 
     student_rows = conn.execute("""
         SELECT u.id, u.name, u.email, s.course, s.faculty, s.gpa, s.skills, s.internship_status, s.results
@@ -1574,29 +2513,52 @@ def generate_recruiter_matches(recruiter_id, top_n=6):
 
     ranked = []
     for student in student_rows:
-        student_text = ' '.join(filter(None, [student['skills'], student['course'], student['faculty'], student['results'], student['internship_status']])) .lower()
+        student_text = " ".join(
+            filter(
+                None,
+                [
+                    student["skills"],
+                    student["course"],
+                    student["faculty"],
+                    student["results"],
+                    student["internship_status"],
+                ],
+            )
+        ).lower()
         student_tokens = set(re.findall(r"[A-Za-z0-9+#]+", student_text))
         overlap = len(recruiter_keywords.intersection(student_tokens))
         try:
-            gpa_value = float(student['gpa']) if student['gpa'] is not None else 0.0
+            gpa_value = float(student["gpa"]) if student["gpa"] is not None else 0.0
         except (TypeError, ValueError):
             gpa_value = 0.0
         gpa_bonus = min(gpa_value / 4.0, 1.0) * 0.25
-        status_bonus = 0.1 if (student['internship_status'] or '').lower() in ['seeking internship', 'open to work'] else 0
-        score = min(1.0, (overlap / max(1, len(recruiter_keywords))) * 0.65 + gpa_bonus + status_bonus)
+        status_bonus = (
+            0.1
+            if (student["internship_status"] or "").lower()
+            in ["seeking internship", "open to work"]
+            else 0
+        )
+        score = min(
+            1.0,
+            (overlap / max(1, len(recruiter_keywords))) * 0.65
+            + gpa_bonus
+            + status_bonus,
+        )
         if score >= 0.18:
-            ranked.append({
-                'user_id': student['id'],
-                'name': student['name'],
-                'email': student['email'],
-                'course': student['course'],
-                'faculty': student['faculty'],
-                'gpa': student['gpa'],
-                'skills': student['skills'],
-                'score': round(score, 2)
-            })
+            ranked.append(
+                {
+                    "user_id": student["id"],
+                    "name": student["name"],
+                    "email": student["email"],
+                    "course": student["course"],
+                    "faculty": student["faculty"],
+                    "gpa": student["gpa"],
+                    "skills": student["skills"],
+                    "score": round(score, 2),
+                }
+            )
 
-    ranked.sort(key=lambda item: (-item['score'], item['name']))
+    ranked.sort(key=lambda item: (-item["score"], item["name"]))
     return ranked[:top_n]
 
 
@@ -1604,95 +2566,166 @@ def process_recruiter_company_profile(recruiter_id=None, user_id=None):
     conn = get_db()
     recruiter = None
     if recruiter_id:
-        recruiter = conn.execute("SELECT * FROM recruiters WHERE id = ?", (recruiter_id,)).fetchone()
+        recruiter = conn.execute(
+            "SELECT * FROM recruiters WHERE id = ?", (recruiter_id,)
+        ).fetchone()
     elif user_id:
-        recruiter = conn.execute("SELECT * FROM recruiters WHERE user_id = ?", (user_id,)).fetchone()
+        recruiter = conn.execute(
+            "SELECT * FROM recruiters WHERE user_id = ?", (user_id,)
+        ).fetchone()
 
     if not recruiter:
         conn.close()
         return None
 
-    company_url = recruiter['company_website'] or recruiter['website']
+    company_url = recruiter["company_website"] or recruiter["website"]
     if not company_url:
-        conn.execute("UPDATE recruiters SET scrape_status = 'failed', scrape_message = 'No company website configured', scrape_error = 'Missing website', last_scrape_at = CURRENT_TIMESTAMP WHERE id = ?", (recruiter['id'],))
+        conn.execute(
+            "UPDATE recruiters SET scrape_status = 'failed', scrape_message = 'No company website configured', scrape_error = 'Missing website', last_scrape_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (recruiter["id"],),
+        )
         conn.commit()
         conn.close()
         return None
 
     try:
-        conn.execute("UPDATE recruiters SET scrape_status = 'scraping', scrape_message = 'Refreshing company profile and job listings', scrape_error = NULL, last_scrape_at = CURRENT_TIMESTAMP WHERE id = ?", (recruiter['id'],))
+        conn.execute(
+            "UPDATE recruiters SET scrape_status = 'scraping', scrape_message = 'Refreshing company profile and job listings', scrape_error = NULL, last_scrape_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (recruiter["id"],),
+        )
         conn.commit()
 
         metadata = extract_website_metadata(company_url)
         social_links = extract_social_links(company_url)
-        company_name = metadata.get('title') or recruiter['company_name'] or recruiter['website']
-        description = metadata.get('description') or recruiter['description']
-        logo_url = metadata.get('logo_url') or recruiter['logo_url'] or recruiter['website_logo_url']
-        industry = metadata.get('industry') or recruiter['industry']
+        company_name = (
+            metadata.get("title") or recruiter["company_name"] or recruiter["website"]
+        )
+        description = metadata.get("description") or recruiter["description"]
+        logo_url = (
+            metadata.get("logo_url")
+            or recruiter["logo_url"]
+            or recruiter["website_logo_url"]
+        )
+        industry = metadata.get("industry") or recruiter["industry"]
 
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE recruiters
             SET company_name = ?, industry = ?, website_title = ?, description = ?, logo_url = ?, website_logo_url = ?, social_links = ?, company_website = ?,
                 scrape_status = 'completed', scrape_message = 'Company profile refreshed', last_scrape_at = CURRENT_TIMESTAMP, scrape_error = NULL
             WHERE id = ?
-        """, (company_name, industry, metadata.get('title'), description, logo_url, logo_url, ','.join(social_links), company_url, recruiter['id']))
+        """,
+            (
+                company_name,
+                industry,
+                metadata.get("title"),
+                description,
+                logo_url,
+                logo_url,
+                ",".join(social_links),
+                company_url,
+                recruiter["id"],
+            ),
+        )
 
-        company = conn.execute("SELECT id FROM companies WHERE user_id = ?", (recruiter['user_id'],)).fetchone()
+        company = conn.execute(
+            "SELECT id FROM companies WHERE user_id = ?", (recruiter["user_id"],)
+        ).fetchone()
         company_payload = {
-            'title': metadata.get('title'),
-            'description': description,
-            'logo_url': logo_url,
-            'industry': industry,
-            'contact_email': metadata.get('contact_email'),
-            'phone': metadata.get('phone'),
-            'social_links': social_links,
-            'recent_updates': metadata.get('recent_updates', []),
-            'website_url': company_url
+            "title": metadata.get("title"),
+            "description": description,
+            "logo_url": logo_url,
+            "industry": industry,
+            "contact_email": metadata.get("contact_email"),
+            "phone": metadata.get("phone"),
+            "social_links": social_links,
+            "recent_updates": metadata.get("recent_updates", []),
+            "website_url": company_url,
         }
         if company:
-            conn.execute("""
+            conn.execute(
+                """
                 UPDATE companies
                 SET name = ?, description = ?, website_url = ?, linkedin_url = ?, logo_url = ?, industry = ?, location = ?, updated_at = ?
                 WHERE id = ?
-            """, (company_name, description, company_url, social_links[0] if social_links else None, logo_url, industry, recruiter['location'], datetime.now(), company['id']))
-            company_id = company['id']
+            """,
+                (
+                    company_name,
+                    description,
+                    company_url,
+                    social_links[0] if social_links else None,
+                    logo_url,
+                    industry,
+                    recruiter["location"],
+                    datetime.now(),
+                    company["id"],
+                ),
+            )
+            company_id = company["id"]
         else:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO companies (user_id, name, description, website_url, linkedin_url, logo_url, industry, location)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (recruiter['user_id'], company_name, description, company_url, social_links[0] if social_links else None, logo_url, industry, recruiter['location']))
+            """,
+                (
+                    recruiter["user_id"],
+                    company_name,
+                    description,
+                    company_url,
+                    social_links[0] if social_links else None,
+                    logo_url,
+                    industry,
+                    recruiter["location"],
+                ),
+            )
             company_id = conn.lastrowid
 
-        conn.execute("""
+        conn.execute(
+            """
             INSERT OR REPLACE INTO company_data (company_id, data_type, fetched_data, last_fetched, fetch_status)
             VALUES (?, 'website', ?, CURRENT_TIMESTAMP, 'success')
-        """, (company_id, json.dumps(company_payload)))
+        """,
+            (company_id, json.dumps(company_payload)),
+        )
 
-        jobs_found = scrape_jobs_from_url(company_url, recruiter['id'])
-        conn.execute("UPDATE recruiters SET jobs_found_count = ? WHERE id = ?", (jobs_found, recruiter['id']))
+        jobs_found = scrape_jobs_from_url(company_url, recruiter["id"])
+        conn.execute(
+            "UPDATE recruiters SET jobs_found_count = ? WHERE id = ?",
+            (jobs_found, recruiter["id"]),
+        )
 
-        matches = generate_recruiter_matches(recruiter['id'])
+        matches = generate_recruiter_matches(recruiter["id"])
         for match in matches:
             create_notification_for_user(
-                match['user_id'],
-                '🎯 Recruiter match alert',
+                match["user_id"],
+                "🎯 Recruiter match alert",
                 f"{company_name} is looking for students with {', '.join((match['skills'] or '').split(',')[:3]) or 'matching skills'}.",
-                '/dashboard',
-                'match',
-                'fas fa-user-graduate'
+                "/dashboard",
+                "match",
+                "fas fa-user-graduate",
             )
 
         conn.commit()
-        return {'company': company_name, 'jobs_found': jobs_found, 'matches': len(matches)}
+        return {
+            "company": company_name,
+            "jobs_found": jobs_found,
+            "matches": len(matches),
+        }
     except Exception as exc:
-        conn.execute("UPDATE recruiters SET scrape_status = 'failed', scrape_message = 'Failed to refresh company profile', scrape_error = ? WHERE id = ?", (str(exc)[:250], recruiter['id']))
+        conn.execute(
+            "UPDATE recruiters SET scrape_status = 'failed', scrape_message = 'Failed to refresh company profile', scrape_error = ? WHERE id = ?",
+            (str(exc)[:250], recruiter["id"]),
+        )
         conn.commit()
         conn.close()
         return None
     finally:
         conn.close()
 
+
 # ===================== COMPANY VERIFICATION (AUTO) =====================
+
 
 def verify_company_automatically(company_url, company_email=None):
     """
@@ -1701,49 +2734,69 @@ def verify_company_automatically(company_url, company_email=None):
     """
     score = 0
     reasons = []
-    
+
     # 1. Check if website exists and has business info
     try:
-        response = requests.get(company_url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
-        
+        response = requests.get(
+            company_url,
+            timeout=10,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+        )
+
         if response.status_code == 200:
             score += 10
             reasons.append("✅ Website is accessible")
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
+
+            soup = BeautifulSoup(response.text, "html.parser")
             metadata = extract_website_metadata(company_url)
-            if metadata['title']:
+            if metadata["title"]:
                 score += 5
                 reasons.append("✅ Website title captured")
-            if metadata['description']:
+            if metadata["description"]:
                 score += 5
                 reasons.append("✅ Website description captured")
-            if metadata['logo_url']:
+            if metadata["logo_url"]:
                 score += 5
                 reasons.append("✅ Website image/logo found")
-            
+
             # Look for business indicators
-            business_terms = ['about', 'company', 'contact', 'address', 'phone', 
-                            'email', 'business', 'office', 'terms', 'privacy']
-            found_terms = sum(1 for term in business_terms 
-                            if term in response.text.lower())
-            
+            business_terms = [
+                "about",
+                "company",
+                "contact",
+                "address",
+                "phone",
+                "email",
+                "business",
+                "office",
+                "terms",
+                "privacy",
+            ]
+            found_terms = sum(
+                1 for term in business_terms if term in response.text.lower()
+            )
+
             if found_terms >= 3:
                 score += 20
                 reasons.append(f"✅ Found {found_terms} business indicators")
-            
+
             # Check for contact page
-            if soup.find('a', href=lambda x: x and 'contact' in x.lower()):
+            if soup.find("a", href=lambda x: x and "contact" in x.lower()):
                 score += 15
                 reasons.append("✅ Contact page exists")
-                
+
     except Exception as e:
         reasons.append(f"❌ Website check failed: {str(e)[:50]}")
-    
+
     # 2. Check domain age
-    domain = company_url.replace('http://', '').replace('https://', '').replace('www.', '').split('/')[0]
+    domain = (
+        company_url.replace("http://", "")
+        .replace("https://", "")
+        .replace("www.", "")
+        .split("/")[0]
+    )
     if whois is not None:
         try:
             domain_info = whois.whois(domain)
@@ -1755,10 +2808,12 @@ def verify_company_automatically(company_url, company_email=None):
                 age_days = (datetime.now() - creation_date).days
                 if age_days > 730:  # 2+ years
                     score += 25
-                    reasons.append(f"✅ Domain age: {age_days//365} years (trusted)")
+                    reasons.append(f"✅ Domain age: {age_days // 365} years (trusted)")
                 elif age_days > 365:  # 1-2 years
                     score += 15
-                    reasons.append(f"✅ Domain age: {age_days//365} year (acceptable)")
+                    reasons.append(
+                        f"✅ Domain age: {age_days // 365} year (acceptable)"
+                    )
                 else:
                     reasons.append(f"⚠️ New domain ({age_days} days old)")
         except Exception:
@@ -1769,8 +2824,8 @@ def verify_company_automatically(company_url, company_email=None):
     # 3. Check email domain match
     if company_email:
         try:
-            email_domain = company_email.split('@')[1]
-            website_domain = domain.replace('www.', '')
+            email_domain = company_email.split("@")[1]
+            website_domain = domain.replace("www.", "")
             if email_domain == website_domain or email_domain in website_domain:
                 score += 20
                 reasons.append("✅ Email matches website domain (professional)")
@@ -1782,7 +2837,7 @@ def verify_company_automatically(company_url, company_email=None):
     # 4. Check DNS records
     if dns is not None:
         try:
-            mx_records = dns.resolver.resolve(domain, 'MX')
+            mx_records = dns.resolver.resolve(domain, "MX")
             if mx_records:
                 score += 10
                 reasons.append("✅ Valid mail server configured")
@@ -1790,54 +2845,61 @@ def verify_company_automatically(company_url, company_email=None):
             reasons.append("⚠️ No dedicated mail server")
     else:
         reasons.append("⚠️ DNS resolver unavailable")
-    
+
     # Determine status
-    if score >= VERIFICATION_THRESHOLDS['auto_approve']:
+    if score >= VERIFICATION_THRESHOLDS["auto_approve"]:
         status = "auto_verified"
-    elif score >= VERIFICATION_THRESHOLDS['manual_review']:
+    elif score >= VERIFICATION_THRESHOLDS["manual_review"]:
         status = "pending_review"
     else:
         status = "rejected"
-    
+
     return {
-        'status': status,
-        'score': score,
-        'reasons': reasons,
-        'metadata': metadata if 'metadata' in locals() else {'title': None, 'description': None, 'logo_url': None},
-        'needs_manual_review': score < VERIFICATION_THRESHOLDS['auto_approve']
+        "status": status,
+        "score": score,
+        "reasons": reasons,
+        "metadata": metadata
+        if "metadata" in locals()
+        else {"title": None, "description": None, "logo_url": None},
+        "needs_manual_review": score < VERIFICATION_THRESHOLDS["auto_approve"],
     }
 
 
 def extract_student_query_terms(incoming_message):
-    text = (incoming_message or '').strip().lower()
-    grade_match = re.search(r'\b([abcdf])\b', text, re.I)
+    text = (incoming_message or "").strip().lower()
+    grade_match = re.search(r"\b([abcdf])\b", text, re.I)
     grade = grade_match.group(1).upper() if grade_match else None
 
-    percent_match = re.search(r'(?:>|at least|minimum|more than|above|over)\s*(\d{1,3})\s*%', text, re.I)
+    percent_match = re.search(
+        r"(?:>|at least|minimum|more than|above|over)\s*(\d{1,3})\s*%", text, re.I
+    )
     if percent_match:
         min_percent = int(percent_match.group(1))
     else:
-        percent_match = re.search(r'\b(\d{1,3})\s*%\b', text)
+        percent_match = re.search(r"\b(\d{1,3})\s*%\b", text)
         min_percent = int(percent_match.group(1)) if percent_match else None
 
-    subject_match = re.search(r'\b(?:in|for|about|on)\s+([a-zA-Z][a-zA-Z\- ]{2,})', text)
+    subject_match = re.search(
+        r"\b(?:in|for|about|on)\s+([a-zA-Z][a-zA-Z\- ]{2,})", text
+    )
     subject = subject_match.group(1).strip() if subject_match else None
-    if subject and subject.lower().startswith('the '):
+    if subject and subject.lower().startswith("the "):
         subject = subject[4:]
     return {
-        'grade': grade,
-        'min_percent': min_percent,
-        'subject': subject,
-        'text': text,
+        "grade": grade,
+        "min_percent": min_percent,
+        "subject": subject,
+        "text": text,
     }
 
 
 def query_students_for_assistant(question):
     terms = extract_student_query_terms(question)
-    if not terms['subject'] and not terms['grade'] and terms['min_percent'] is None:
+    if not terms["subject"] and not terms["grade"] and terms["min_percent"] is None:
         return None
 
     from models import SessionLocal
+
     session = SessionLocal()
     try:
         sql = """
@@ -1849,31 +2911,37 @@ def query_students_for_assistant(question):
         params = {}
         clauses = []
 
-        if terms['subject']:
+        if terms["subject"]:
             subject_like = f"%{terms['subject']}%"
-            clauses.append("(LOWER(s.course) LIKE :subject OR LOWER(s.skills) LIKE :subject OR LOWER(s.results) LIKE :subject)")
-            params['subject'] = subject_like.lower()
+            clauses.append(
+                "(LOWER(s.course) LIKE :subject OR LOWER(s.skills) LIKE :subject OR LOWER(s.results) LIKE :subject)"
+            )
+            params["subject"] = subject_like.lower()
 
-        if terms['grade']:
-            clauses.append("(LOWER(s.results) LIKE :grade OR LOWER(s.skills) LIKE :grade)")
-            params['grade'] = f"%{terms['grade'].lower()}%"
+        if terms["grade"]:
+            clauses.append(
+                "(LOWER(s.results) LIKE :grade OR LOWER(s.skills) LIKE :grade)"
+            )
+            params["grade"] = f"%{terms['grade'].lower()}%"
 
-        if terms['min_percent'] is not None:
+        if terms["min_percent"] is not None:
             clauses.append("(s.gpa >= :min_gpa)")
-            params['min_gpa'] = float(terms['min_percent'])
+            params["min_gpa"] = float(terms["min_percent"])
 
         if clauses:
-            sql += ' AND ' + ' AND '.join(clauses)
+            sql += " AND " + " AND ".join(clauses)
 
-        sql += ' ORDER BY s.gpa DESC LIMIT 20'
+        sql += " ORDER BY s.gpa DESC LIMIT 20"
         rows = session.execute(text(sql), params).fetchall()
         if not rows:
             return "I could not find matching student records for that query."
 
         lines = ["Here are the student records I found:"]
         for row in rows:
-            lines.append(f"- {row.name} | Course: {row.course or 'N/A'} | Faculty: {row.faculty or 'N/A'} | GPA/Score: {row.gpa or 'N/A'}")
-        return '\n'.join(lines)
+            lines.append(
+                f"- {row.name} | Course: {row.course or 'N/A'} | Faculty: {row.faculty or 'N/A'} | GPA/Score: {row.gpa or 'N/A'}"
+            )
+        return "\n".join(lines)
     finally:
         session.close()
 
@@ -1883,7 +2951,7 @@ def generate_chatbot_response(incoming_message, user_id=None, session_id=None):
         result = get_ai_response(
             incoming_message,
             user_id=user_id,
-            session_id=session_id or f"legacy_{user_id or 'anonymous'}"
+            session_id=session_id or f"legacy_{user_id or 'anonymous'}",
         )
         return result["response"]
     except Exception as exc:
@@ -1893,28 +2961,45 @@ def generate_chatbot_response(incoming_message, user_id=None, session_id=None):
 
 def get_primary_admin_id():
     conn = get_db()
-    admin = conn.execute("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
+    admin = conn.execute(
+        "SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1"
+    ).fetchone()
     conn.close()
-    return admin['id'] if admin else None
+    return admin["id"] if admin else None
+
 
 # ===================== CHAT MODERATION (AUTO) =====================
+
 
 def is_job_related_text(text):
     clean_text = (text or "").strip().lower()
     if not clean_text:
         return False
 
-    keywords = ['job', 'internship', 'vacancy', 'career', 'position', 'hiring', 'apply', 'salary', 'responsibilities', 'deadline']
+    keywords = [
+        "job",
+        "internship",
+        "vacancy",
+        "career",
+        "position",
+        "hiring",
+        "apply",
+        "salary",
+        "responsibilities",
+        "deadline",
+    ]
     score = sum(1 for k in keywords if k in clean_text)
     if score >= 2:
         return True
 
     if ML_AVAILABLE and sentence_encoder and np is not None:
         try:
-            prompt = 'Job posting summary, role description, responsibilities, company information, location and salary'
+            prompt = "Job posting summary, role description, responsibilities, company information, location and salary"
             vec_text = sentence_encoder.encode([clean_text])[0]
             vec_prompt = sentence_encoder.encode([prompt])[0]
-            similarity = np.dot(vec_text, vec_prompt) / (np.linalg.norm(vec_text) * np.linalg.norm(vec_prompt))
+            similarity = np.dot(vec_text, vec_prompt) / (
+                np.linalg.norm(vec_text) * np.linalg.norm(vec_prompt)
+            )
             return similarity > 0.65
         except Exception:
             pass
@@ -1923,15 +3008,15 @@ def is_job_related_text(text):
 
 
 def parse_job_card(card):
-    text = ' '.join(card.stripped_strings)
+    text = " ".join(card.stripped_strings)
     title = None
     company = None
     location = None
     salary = None
     posted_date = None
 
-    if card.name == 'article' or card.name == 'div':
-        for header_tag in ['h1', 'h2', 'h3', 'h4']:
+    if card.name == "article" or card.name == "div":
+        for header_tag in ["h1", "h2", "h3", "h4"]:
             header = card.find(header_tag)
             if header and len(header.get_text(strip=True)) > 10:
                 title = header.get_text(strip=True)
@@ -1940,36 +3025,71 @@ def parse_job_card(card):
     if not title:
         title = card.get_text(strip=True)[:120]
 
-    if card.find(string=lambda s: s and 'company' in s.lower()):
-        company_text = card.find(string=lambda s: s and 'company' in s.lower())
-        company = company_text.parent.get_text(strip=True).replace('Company', '').strip()
+    if card.find(string=lambda s: s and "company" in s.lower()):
+        company_text = card.find(string=lambda s: s and "company" in s.lower())
+        company = (
+            company_text.parent.get_text(strip=True).replace("Company", "").strip()
+        )
 
-    location_tag = card.find(string=lambda s: s and 'location' in s.lower())
+    location_tag = card.find(string=lambda s: s and "location" in s.lower())
     if location_tag:
-        location = location_tag.parent.get_text(strip=True).replace('Location', '').strip()
+        location = (
+            location_tag.parent.get_text(strip=True).replace("Location", "").strip()
+        )
 
-    salary_tag = card.find(string=lambda s: s and 'salary' in s.lower())
+    salary_tag = card.find(string=lambda s: s and "salary" in s.lower())
     if salary_tag:
-        salary = salary_tag.parent.get_text(strip=True).replace('Salary', '').strip()
+        salary = salary_tag.parent.get_text(strip=True).replace("Salary", "").strip()
 
-    if card.find(string=lambda s: s and 'posted' in s.lower()):
-        posted_date = card.find(string=lambda s: s and 'posted' in s.lower()).strip()
+    if card.find(string=lambda s: s and "posted" in s.lower()):
+        posted_date = card.find(string=lambda s: s and "posted" in s.lower()).strip()
 
-    return title, ' '.join(card.stripped_strings), company, location, salary, posted_date
+    return (
+        title,
+        " ".join(card.stripped_strings),
+        company,
+        location,
+        salary,
+        posted_date,
+    )
 
 
-def store_scraped_job(source_url, title, description, company=None, location=None, salary=None, job_type=None, posted_date=None):
+def store_scraped_job(
+    source_url,
+    title,
+    description,
+    company=None,
+    location=None,
+    salary=None,
+    job_type=None,
+    posted_date=None,
+):
     conn = None
     try:
         conn = get_db()
         cur = conn.cursor()
-        existing = cur.execute("SELECT 1 FROM scraped_jobs WHERE source_url = ? AND title = ?", (source_url, title)).fetchone()
+        existing = cur.execute(
+            "SELECT 1 FROM scraped_jobs WHERE source_url = ? AND title = ?",
+            (source_url, title),
+        ).fetchone()
         if existing:
             return False
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO scraped_jobs (source_url, title, description, company, location, salary, job_type, posted_date)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (source_url, title, description, company, location, salary, job_type, posted_date))
+        """,
+            (
+                source_url,
+                title,
+                description,
+                company,
+                location,
+                salary,
+                job_type,
+                posted_date,
+            ),
+        )
         conn.commit()
         return True
     finally:
@@ -1980,24 +3100,32 @@ def store_scraped_job(source_url, title, description, company=None, location=Non
 def scrape_jobs_from_url(url, recruiter_id=None):
     jobs_found = 0
     try:
-        response = requests.get(url, timeout=12, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
+        response = requests.get(
+            url,
+            timeout=12,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+        )
         if response.status_code != 200:
             return jobs_found
 
-        soup = BeautifulSoup(response.text, 'html.parser')
-        containers = soup.find_all(['article', 'div', 'li'], limit=150)
+        soup = BeautifulSoup(response.text, "html.parser")
+        containers = soup.find_all(["article", "div", "li"], limit=150)
         for card in containers:
-            text = ' '.join(card.stripped_strings)
+            text = " ".join(card.stripped_strings)
             if len(text) < 80:
                 continue
             if not is_job_related_text(text):
                 continue
-            title, description, company, location, salary, posted_date = parse_job_card(card)
+            title, description, company, location, salary, posted_date = parse_job_card(
+                card
+            )
             if not title or len(title) < 8:
                 continue
-            if store_scraped_job(url, title, description, company, location, salary, None, posted_date):
+            if store_scraped_job(
+                url, title, description, company, location, salary, None, posted_date
+            ):
                 jobs_found += 1
     except requests.exceptions.ConnectionError as ce:
         safe_print(f"Connection error scraping {url}: DNS or network issue")
@@ -2012,7 +3140,10 @@ def scrape_jobs_from_url(url, recruiter_id=None):
     try:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("UPDATE recruiters SET last_scrape_at = ?, jobs_found_count = ? WHERE id = ?", (datetime.now(), jobs_found, recruiter_id))
+        cur.execute(
+            "UPDATE recruiters SET last_scrape_at = ?, jobs_found_count = ? WHERE id = ?",
+            (datetime.now(), jobs_found, recruiter_id),
+        )
         conn.commit()
     except Exception as update_error:
         safe_print(f"Failed to update recruiter scrape stats for {url}: {update_error}")
@@ -2027,7 +3158,9 @@ def refresh_scraped_jobs():
     conn = None
     try:
         conn = get_db()
-        recruiter_rows = conn.execute("SELECT id, company_website, website FROM recruiters WHERE COALESCE(TRIM(company_website), TRIM(website)) != ''").fetchall()
+        recruiter_rows = conn.execute(
+            "SELECT id, company_website, website FROM recruiters WHERE COALESCE(TRIM(company_website), TRIM(website)) != ''"
+        ).fetchall()
     finally:
         if conn:
             conn.close()
@@ -2035,16 +3168,18 @@ def refresh_scraped_jobs():
     total = 0
     if recruiter_rows:
         for recruiter in recruiter_rows:
-            result = process_recruiter_company_profile(recruiter_id=recruiter['id'])
-            if result and result.get('jobs_found'):
-                total += int(result['jobs_found'])
-        safe_print(f"Refreshed {len(recruiter_rows)} recruiter company profiles and scraped {total} new jobs")
+            result = process_recruiter_company_profile(recruiter_id=recruiter["id"])
+            if result and result.get("jobs_found"):
+                total += int(result["jobs_found"])
+        safe_print(
+            f"Refreshed {len(recruiter_rows)} recruiter company profiles and scraped {total} new jobs"
+        )
     else:
         sources = [
-            'https://www.jobs.co.ls',
-            'https://www.indeed.com/q-Lesotho-jobs.html',
-            'https://www.countryjobs.com/lesotho-jobs',
-            'https://www.glassdoor.com/Job/lesotho-jobs-SRCH_IL.0,7_IN103.htm'
+            "https://www.jobs.co.ls",
+            "https://www.indeed.com/q-Lesotho-jobs.html",
+            "https://www.countryjobs.com/lesotho-jobs",
+            "https://www.glassdoor.com/Job/lesotho-jobs-SRCH_IL.0,7_IN103.htm",
         ]
         for source in sources:
             total += scrape_jobs_from_url(source)
@@ -2054,7 +3189,9 @@ def refresh_scraped_jobs():
     conn = None
     try:
         conn = get_db()
-        conn.execute("DELETE FROM scraped_jobs WHERE id NOT IN (SELECT id FROM scraped_jobs ORDER BY scraped_at DESC LIMIT 300)")
+        conn.execute(
+            "DELETE FROM scraped_jobs WHERE id NOT IN (SELECT id FROM scraped_jobs ORDER BY scraped_at DESC LIMIT 300)"
+        )
         conn.commit()
     finally:
         if conn:
@@ -2065,31 +3202,42 @@ def sync_academic_data_for_user(user_id):
     conn = None
     try:
         conn = get_db()
-        user = conn.execute("SELECT id, email, name, role, student_id, academic_data_retry_count FROM users WHERE id = ?", (user_id,)).fetchone()
+        user = conn.execute(
+            "SELECT id, email, name, role, student_id, academic_data_retry_count FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
         if not user:
             return False
 
-        if not user['student_id']:
-            conn.execute("UPDATE users SET academic_data_pending = 0, academic_data_last_attempt = ? WHERE id = ?", (datetime.utcnow(), user_id))
+        if not user["student_id"]:
+            conn.execute(
+                "UPDATE users SET academic_data_pending = 0, academic_data_last_attempt = ? WHERE id = ?",
+                (datetime.utcnow(), user_id),
+            )
             conn.commit()
             return False
 
         start_attempt = datetime.utcnow()
-        retry_count = (user['academic_data_retry_count'] or 0) + 1
-        conn.execute("""
+        retry_count = (user["academic_data_retry_count"] or 0) + 1
+        conn.execute(
+            """
             UPDATE users
             SET academic_data_pending = 1,
                 academic_data_last_attempt = ?,
                 academic_data_retry_count = ?
             WHERE id = ?
-        """, (start_attempt, retry_count, user_id))
+        """,
+            (start_attempt, retry_count, user_id),
+        )
         conn.commit()
     finally:
         if conn:
             conn.close()
 
     try:
-        portal_data = fetch_from_university_portal(user['student_id'], audit_user_id=user_id)
+        portal_data = fetch_from_university_portal(
+            user["student_id"], audit_user_id=user_id
+        )
     except Exception as e:
         print(f"Academic sync error for user {user_id}: {e}")
         portal_data = None
@@ -2100,52 +3248,81 @@ def sync_academic_data_for_user(user_id):
         if portal_data:
             now = datetime.utcnow()
             portal_json = json.dumps(portal_data)
-            conn.execute("""
+            conn.execute(
+                """
                 UPDATE users
                 SET academic_data_pending = 0,
                     academic_data_last_attempt = ?,
                     academic_data_retry_count = ?,
                     academic_data_raw = ?
                 WHERE id = ?
-            """, (now, retry_count, portal_json, user_id))
+            """,
+                (now, retry_count, portal_json, user_id),
+            )
 
-            existing_student = conn.execute("SELECT id FROM students WHERE user_id = ?", (user_id,)).fetchone()
+            existing_student = conn.execute(
+                "SELECT id FROM students WHERE user_id = ?", (user_id,)
+            ).fetchone()
             if existing_student:
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE students
                     SET course = ?, faculty = ?, gpa = ?, graduation_year = ?
                     WHERE user_id = ?
-                """, (portal_data.get('course'), portal_data.get('faculty'), portal_data.get('gpa'), portal_data.get('graduation_year'), user_id))
+                """,
+                    (
+                        portal_data.get("course"),
+                        portal_data.get("faculty"),
+                        portal_data.get("gpa"),
+                        portal_data.get("graduation_year"),
+                        user_id,
+                    ),
+                )
             else:
-                default_status = "Not Seeking" if user['role'] == 'alumni' else "Seeking Internship"
-                conn.execute("""
+                default_status = (
+                    "Not Seeking" if user["role"] == "alumni" else "Seeking Internship"
+                )
+                conn.execute(
+                    """
                     INSERT INTO students (user_id, course, faculty, gpa, graduation_year, internship_status)
                     VALUES (?, ?, ?, ?, ?, ?)
-                """, (user_id, portal_data.get('course'), portal_data.get('faculty'), portal_data.get('gpa'), portal_data.get('graduation_year'), default_status))
+                """,
+                    (
+                        user_id,
+                        portal_data.get("course"),
+                        portal_data.get("faculty"),
+                        portal_data.get("gpa"),
+                        portal_data.get("graduation_year"),
+                        default_status,
+                    ),
+                )
 
             conn.commit()
         else:
-            conn.execute("""
+            conn.execute(
+                """
                 UPDATE users
                 SET academic_data_pending = 1,
                     academic_data_last_attempt = ?,
                     academic_data_retry_count = ?
                 WHERE id = ?
-            """, (datetime.utcnow(), retry_count, user_id))
+            """,
+                (datetime.utcnow(), retry_count, user_id),
+            )
             conn.commit()
     finally:
         if conn:
             conn.close()
-    
+
     if portal_data:
         with app.app_context():
             send_email(
-                user['email'],
-                'Academic data synced',
-                f"Your academic profile has been synced successfully. Course: {portal_data.get('course') or 'Not available'}"
+                user["email"],
+                "Academic data synced",
+                f"Your academic profile has been synced successfully. Course: {portal_data.get('course') or 'Not available'}",
             )
         return True
-    
+
     return False
 
 
@@ -2153,46 +3330,65 @@ def retry_pending_academic_data_sync():
     conn = None
     try:
         conn = get_db()
-        pending_users = conn.execute("SELECT id FROM users WHERE academic_data_pending = 1").fetchall()
+        pending_users = conn.execute(
+            "SELECT id FROM users WHERE academic_data_pending = 1"
+        ).fetchall()
     finally:
         if conn:
             conn.close()
 
     for pending_user in pending_users:
-        threading.Thread(target=sync_academic_data_for_user, args=(pending_user['id'],), daemon=True).start()
+        threading.Thread(
+            target=sync_academic_data_for_user, args=(pending_user["id"],), daemon=True
+        ).start()
 
 
 def schedule_job_scraping():
     try:
-        scheduler.add_job(refresh_scraped_jobs, 'interval', hours=6, id='refresh_scraped_jobs', replace_existing=True, next_run_time=datetime.now())
-        scheduler.add_job(retry_pending_academic_data_sync, 'interval', hours=1, id='academic_data_retry_sync', replace_existing=True)
+        scheduler.add_job(
+            refresh_scraped_jobs,
+            "interval",
+            hours=6,
+            id="refresh_scraped_jobs",
+            replace_existing=True,
+            next_run_time=datetime.now(),
+        )
+        scheduler.add_job(
+            retry_pending_academic_data_sync,
+            "interval",
+            hours=1,
+            id="academic_data_retry_sync",
+            replace_existing=True,
+        )
         scheduler.start()
-        safe_print('Background schedulers started')
+        safe_print("Background schedulers started")
     except Exception as e:
-        safe_print(f'Job scraping scheduler failed: {e}')
+        safe_print(f"Job scraping scheduler failed: {e}")
+
 
 try:
     schedule_job_scraping()
 except Exception as e:
     safe_print(f"Failed to schedule job scraping: {e}")
 
+
 def generate_certificate_hash(user_id, results):
     """Generate a simple SHA-256 hash for a student's certificate/results."""
     if not results:
         return None
     base = f"{user_id}|{results}"
-    return hashlib.sha256(base.encode('utf-8')).hexdigest()
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
 
 def init_web3():
     try:
-        provider_uri = os.environ.get('WEB3_PROVIDER_URI')
-        private_key = os.environ.get('WEB3_PRIVATE_KEY')
+        provider_uri = os.environ.get("WEB3_PROVIDER_URI")
+        private_key = os.environ.get("WEB3_PRIVATE_KEY")
         if not provider_uri or not private_key or Web3 is None:
             return None
         w3 = Web3(Web3.HTTPProvider(provider_uri))
         acct = w3.eth.account.from_key(private_key)
-        return {'w3': w3, 'account': acct}
+        return {"w3": w3, "account": acct}
     except Exception as e:
         print(f"Web3 init error: {e}")
         return None
@@ -2203,17 +3399,17 @@ def anchor_certificate_on_chain(cert_hash):
         web3_ctx = init_web3()
         if not web3_ctx:
             return None
-        w3 = web3_ctx['w3']
-        acct = web3_ctx['account']
+        w3 = web3_ctx["w3"]
+        acct = web3_ctx["account"]
         to_addr = acct.address
         nonce = w3.eth.get_transaction_count(acct.address)
         tx = {
-            'to': to_addr,
-            'value': 0,
-            'data': w3.toHex(text=cert_hash),
-            'nonce': nonce,
-            'gas': 21000,
-            'gasPrice': w3.toWei(os.environ.get('WEB3_GAS_PRICE_GWEI', '5'), 'gwei')
+            "to": to_addr,
+            "value": 0,
+            "data": w3.toHex(text=cert_hash),
+            "nonce": nonce,
+            "gas": 21000,
+            "gasPrice": w3.toWei(os.environ.get("WEB3_GAS_PRICE_GWEI", "5"), "gwei"),
         }
         signed = acct.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
@@ -2222,93 +3418,104 @@ def anchor_certificate_on_chain(cert_hash):
         print(f"Anchor error: {e}")
         return None
 
+
 # Recommendation engine helpers
 def build_job_profile_text(job):
-    parts = [job.get('title'), job.get('description'), job.get('requirements'), job.get('skills_required'), job.get('location'), job.get('salary')]
-    return ' '.join(str(part) for part in parts if part)
+    parts = [
+        job.get("title"),
+        job.get("description"),
+        job.get("requirements"),
+        job.get("skills_required"),
+        job.get("location"),
+        job.get("salary"),
+    ]
+    return " ".join(str(part) for part in parts if part)
+
 
 def build_student_profile_text(student):
-    parts = [student.get('name'), student.get('course'), student.get('faculty'), student.get('skills'), student.get('results'), student.get('internship_status'), student.get('gpa'), student.get('graduation_year')]
-    return ' '.join(str(part) for part in parts if part)
+    parts = [
+        student.get("name"),
+        student.get("course"),
+        student.get("faculty"),
+        student.get("skills"),
+        student.get("results"),
+        student.get("internship_status"),
+        student.get("gpa"),
+        student.get("graduation_year"),
+    ]
+    return " ".join(str(part) for part in parts if part)
+
 
 def compute_job_recommendations(job_id, top_n=10):
     conn = get_db()
     cur = conn.cursor()
-    job = cur.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-    if not job:
+
+    # Get job skills
+    job = cur.execute(
+        "SELECT skills_required, title FROM jobs WHERE id = ?", (job_id,)
+    ).fetchone()
+    if not job or not job["skills_required"]:
         conn.close()
         return []
 
-    students = cur.execute(
-        """
-        SELECT u.id AS user_id, u.name, s.course, s.faculty, s.gpa, s.graduation_year,
-               s.skills, s.results, s.internship_status
+    job_skills = set(
+        [s.strip().lower() for s in job["skills_required"].split(",") if s.strip()]
+    )
+
+    # Get all students with their skills
+    students = cur.execute("""
+        SELECT u.id AS user_id, u.name, s.skills, s.course, s.faculty
         FROM users u
         JOIN students s ON u.id = s.user_id
         WHERE u.role IN ('student', 'alumni')
-        """
-    ).fetchall()
-
-    if not students:
-        conn.close()
-        return []
-
-    job_text = build_job_profile_text(job).strip()
-    if not job_text:
-        job_text = f"{job['title']} {job['location'] or ''} {job['salary'] or ''}"
-
-    student_docs = []
-    student_ids = []
-
-    for student in students:
-        student_ids.append(student['user_id'])
-        student_docs.append(build_student_profile_text(student))
-
-    if SKLEARN_AVAILABLE:
-        try:
-            vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2))
-            matrix = vectorizer.fit_transform([job_text] + student_docs)
-            scores = cosine_similarity(matrix[0:1], matrix[1:]).flatten()
-        except Exception as e:
-            print(f"Recommendation engine error with sklearn: {e}")
-            scores = None
-    else:
-        scores = None
-
-    if scores is None:
-        def score_text(source, target):
-            source_tokens = set(re.findall(r"\w+", source.lower()))
-            target_tokens = set(re.findall(r"\w+", target.lower()))
-            overlap = source_tokens.intersection(target_tokens)
-            return len(overlap) / max(1, len(source_tokens))
-
-        scores = [score_text(job_text, doc) for doc in student_docs]
+    """).fetchall()
 
     recommendations = []
-    for idx, student_id in enumerate(student_ids):
-        recommendations.append({
-            'student_id': student_id,
-            'score': float(scores[idx])
-        })
+    for student in students:
+        if not student["skills"]:
+            continue
 
-    if PANDAS_AVAILABLE:
-        df = pd.DataFrame(recommendations)
-        df = df.sort_values('score', ascending=False).head(top_n)
-        recommendations = df.to_dict(orient='records')
-    else:
-        recommendations = sorted(recommendations, key=lambda x: x['score'], reverse=True)[:top_n]
+        student_skills = set(
+            [s.strip().lower() for s in student["skills"].split(",") if s.strip()]
+        )
 
+        # Calculate match score
+        matched_skills = job_skills.intersection(student_skills)
+        match_count = len(matched_skills)
+
+        if match_count > 0:
+            score = match_count / len(job_skills) * 100
+            recommendations.append(
+                {
+                    "student_id": student["user_id"],
+                    "name": student["name"],
+                    "course": student["course"],
+                    "faculty": student["faculty"],
+                    "skills": student["skills"],
+                    "matched_skills": ", ".join(list(matched_skills)[:5]),
+                    "score": round(score, 1),
+                }
+            )
+
+    # Sort by score
+    recommendations.sort(key=lambda x: x["score"], reverse=True)
+    recommendations = recommendations[:top_n]
+
+    # Store in database
     cur.execute("DELETE FROM job_recommendations WHERE job_id = ?", (job_id,))
     for rec in recommendations:
         cur.execute(
-            "INSERT OR REPLACE INTO job_recommendations (job_id, student_id, score) VALUES (?, ?, ?)",
-            (job_id, rec['student_id'], rec['score'])
+            "INSERT INTO job_recommendations (job_id, student_id, score) VALUES (?, ?, ?)",
+            (job_id, rec["student_id"], rec["score"]),
         )
+
     conn.commit()
     conn.close()
     return recommendations
 
+
 # End recommendation engine helpers
+
 
 def moderate_message(message, sender_id=None, receiver_id=None):
     """Basic moderation: block messages containing banned words or suspicious patterns.
@@ -2324,47 +3531,60 @@ def moderate_message(message, sender_id=None, receiver_id=None):
     for pat in SUSPICIOUS_PATTERNS:
         try:
             if re.search(pat, text):
-                log_moderation_flag(message, sender_id, receiver_id, f"suspicious_pattern:{pat}")
+                log_moderation_flag(
+                    message, sender_id, receiver_id, f"suspicious_pattern:{pat}"
+                )
                 return False, "Message looks suspicious and was blocked"
         except re.error:
             continue
     return True, None
+
 
 def update_user_session(user_id):
     """Update the user's session last_activity timestamp to keep 4-hour persistence."""
     try:
         conn = get_db()
         # Update last_activity timestamp - this keeps session alive for queries
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE user_sessions SET last_activity = CURRENT_TIMESTAMP 
             WHERE user_id = ?
-        """, (user_id,))
+        """,
+            (user_id,),
+        )
         conn.commit()
         conn.close()
     except Exception as e:
         print(f"Session update error: {e}")
 
+
 def get_or_create_session(user_id):
     """Get or create a user session token for 4-hour persistence."""
     try:
         conn = get_db()
-        existing = conn.execute("""
+        existing = conn.execute(
+            """
             SELECT session_token FROM user_sessions 
             WHERE user_id = ? AND created_at > datetime('now', '-4 hours')
             ORDER BY created_at DESC LIMIT 1
-        """, (user_id,)).fetchone()
-        
+        """,
+            (user_id,),
+        ).fetchone()
+
         if existing:
             update_user_session(user_id)
             conn.close()
-            return existing['session_token']
-        
+            return existing["session_token"]
+
         # Create new session
         token = secrets.token_hex(32)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO user_sessions (user_id, session_token)
             VALUES (?, ?)
-        """, (user_id, token))
+        """,
+            (user_id, token),
+        )
         conn.commit()
         conn.close()
         return token
@@ -2372,34 +3592,48 @@ def get_or_create_session(user_id):
         print(f"Session creation error: {e}")
         return None
 
+
 def log_moderation_flag(message, sender_id, receiver_id, reason):
     """Log flagged messages for admin review"""
     conn = get_db()
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO moderation_flags (message, sender_id, receiver_id, reason)
         VALUES (?, ?, ?, ?)
-    """, (message, sender_id, receiver_id, reason))
+    """,
+        (message, sender_id, receiver_id, reason),
+    )
     conn.commit()
     conn.close()
 
+
 # ====================== ROUTES ======================
+
 
 @app.route("/")
 def home():
     return render_template("index.html")
 
-@app.route('/course_data.json')
+
+@app.route("/course_data.json")
 def course_data_json():
-    return send_file(os.path.join(BASE_DIR, 'course_data.json'), mimetype='application/json')
+    return send_file(
+        os.path.join(BASE_DIR, "course_data.json"), mimetype="application/json"
+    )
+
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if "user_id" in session:
         flash("You are already logged in", "info")
-        return redirect(url_for("dashboard") if session.get("role") in ["student", "alumni"] else 
-                       url_for("recruiter_dashboard") if session.get("role") == "recruiter" else 
-                       url_for("admin_dashboard"))
-    
+        return redirect(
+            url_for("dashboard")
+            if session.get("role") in ["student", "alumni"]
+            else url_for("recruiter_dashboard")
+            if session.get("role") == "recruiter"
+            else url_for("admin_dashboard")
+        )
+
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         email = request.form.get("email", "").strip()
@@ -2421,11 +3655,14 @@ def register():
         if phone:
             try:
                 import phonenumbers
+
                 parsed_phone = phonenumbers.parse(phone, "LS")
                 if not phonenumbers.is_valid_number(parsed_phone):
                     flash("Invalid phone number", "danger")
                     return render_template("register.html")
-                phone = phonenumbers.format_number(parsed_phone, phonenumbers.PhoneNumberFormat.E164)
+                phone = phonenumbers.format_number(
+                    parsed_phone, phonenumbers.PhoneNumberFormat.E164
+                )
             except Exception:
                 # Skip phone validation if phonenumbers not available
                 pass
@@ -2455,14 +3692,17 @@ def register():
                 return render_template("register.html")
             existing_student_number = cur.execute(
                 "SELECT id FROM users WHERE student_number = ? OR student_id = ?",
-                (student_number, student_number)
+                (student_number, student_number),
             ).fetchone()
             if existing_student_number:
                 flash("Student number already registered", "warning")
                 conn.close()
                 return render_template("register.html")
 
-        if phone and cur.execute("SELECT 1 FROM users WHERE phone=?", (phone,)).fetchone():
+        if (
+            phone
+            and cur.execute("SELECT 1 FROM users WHERE phone=?", (phone,)).fetchone()
+        ):
             flash("Phone number already registered", "warning")
             conn.close()
             return render_template("register.html")
@@ -2470,10 +3710,25 @@ def register():
         pw_hash = generate_password_hash(password)
 
         try:
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO users (name, email, phone, password_hash, role, student_id, student_number, academic_data_pending, academic_data_last_attempt, academic_data_retry_count, academic_data_raw)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (name, email, phone, pw_hash, role, student_number if role in ["student","alumni"] else None, student_number if role in ["student","alumni"] else None, 0, None, 0, None))
+            """,
+                (
+                    name,
+                    email,
+                    phone,
+                    pw_hash,
+                    role,
+                    student_number if role in ["student", "alumni"] else None,
+                    student_number if role in ["student", "alumni"] else None,
+                    0,
+                    None,
+                    0,
+                    None,
+                ),
+            )
             user_id = cur.lastrowid
 
             if role in ["student", "alumni"]:
@@ -2483,23 +3738,36 @@ def register():
                     conn.close()
                     return render_template("register.html")
 
-                default_status = "Not Seeking" if role == "alumni" else "Seeking Internship"
-                cur.execute("""
+                default_status = (
+                    "Not Seeking" if role == "alumni" else "Seeking Internship"
+                )
+                cur.execute(
+                    """
                     INSERT INTO students (user_id, course, faculty, gpa, graduation_year, internship_status)
                     VALUES (?, ?, ?, ?, ?, ?)
-                """, (user_id, None, None, None, None, default_status))
+                """,
+                    (user_id, None, None, None, None, default_status),
+                )
 
-                cur.execute("""
+                cur.execute(
+                    """
                     UPDATE users
                     SET academic_data_pending = 1,
                         academic_data_last_attempt = CURRENT_TIMESTAMP,
                         academic_data_retry_count = 0
                     WHERE id = ?
-                """, (user_id,))
+                """,
+                    (user_id,),
+                )
 
                 conn.commit()
-                threading.Thread(target=sync_academic_data_for_user, args=(user_id,), daemon=True).start()
-                flash("Profile created. Academic data sync started in the background. You'll be notified when ready.", "info")
+                threading.Thread(
+                    target=sync_academic_data_for_user, args=(user_id,), daemon=True
+                ).start()
+                flash(
+                    "Profile created. Academic data sync started in the background. You'll be notified when ready.",
+                    "info",
+                )
 
             elif role == "recruiter":
                 if not company_website:
@@ -2508,40 +3776,71 @@ def register():
                     conn.close()
                     return render_template("register.html")
 
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO recruiters (user_id, company_name, website, company_website, verified, verification_score, verification_status, scrape_status, scrape_message)
                     VALUES (?, ?, ?, ?, 0, 0, 'pending', 'building', 'Analyzing company website')
-                """, (user_id, company_name or name, company_website, company_website))
+                """,
+                    (user_id, company_name or name, company_website, company_website),
+                )
                 recruiter_id = cur.lastrowid
 
                 try:
                     metadata = extract_website_metadata(company_website)
                     if not metadata:
-                        metadata = {'title': None, 'description': None, 'industry': None, 'logo_url': None}
+                        metadata = {
+                            "title": None,
+                            "description": None,
+                            "industry": None,
+                            "logo_url": None,
+                        }
                 except Exception as meta_error:
                     print(f"Metadata extraction error: {meta_error}")
-                    metadata = {'title': None, 'description': None, 'industry': None, 'logo_url': None}
-                
+                    metadata = {
+                        "title": None,
+                        "description": None,
+                        "industry": None,
+                        "logo_url": None,
+                    }
+
                 try:
                     social_links = extract_social_links(company_website)
-                    social_links_text = ','.join(social_links) if social_links else None
+                    social_links_text = ",".join(social_links) if social_links else None
                 except Exception as social_error:
                     print(f"Social links extraction error: {social_error}")
                     social_links_text = None
-                
-                cur.execute("""
+
+                cur.execute(
+                    """
                     UPDATE recruiters
                     SET website_title = ?, description = ?, industry = ?, logo_url = ?, social_links = ?, company_website = ?, last_scrape_at = NULL, jobs_found_count = 0,
                         scrape_status = 'building', scrape_message = 'Building company intelligence profile'
                     WHERE id = ?
-                """, (metadata.get('title'), metadata.get('description'), metadata.get('industry'), metadata.get('logo_url'), social_links_text, company_website, recruiter_id))
-                threading.Thread(target=process_recruiter_company_profile, args=(recruiter_id,), daemon=True).start()
-                flash("Recruiter profile created. AI company intelligence is running in the background.", "info")
+                """,
+                    (
+                        metadata.get("title"),
+                        metadata.get("description"),
+                        metadata.get("industry"),
+                        metadata.get("logo_url"),
+                        social_links_text,
+                        company_website,
+                        recruiter_id,
+                    ),
+                )
+                threading.Thread(
+                    target=process_recruiter_company_profile,
+                    args=(recruiter_id,),
+                    daemon=True,
+                ).start()
+                flash(
+                    "Recruiter profile created. AI company intelligence is running in the background.",
+                    "info",
+                )
 
             conn.commit()
             flash("Registration successful! Please login.", "success")
             return redirect(url_for("login"))
-            
+
         except ValueError as ve:
             conn.rollback()
             print(f"Validation error during registration: {ve}")
@@ -2562,27 +3861,53 @@ def register():
             return render_template("register.html")
 
     return render_template("register.html")
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if "user_id" in session:
         flash("You are already logged in", "info")
-        return redirect(url_for("dashboard") if session.get("role") in ["student", "alumni"] else 
-                       url_for("recruiter_dashboard") if session.get("role") == "recruiter" else 
-                       url_for("admin_dashboard"))
+        return redirect(
+            url_for("dashboard")
+            if session.get("role") in ["student", "alumni"]
+            else url_for("recruiter_dashboard")
+            if session.get("role") == "recruiter"
+            else url_for("admin_dashboard")
+        )
     if request.method == "POST":
         email = request.form.get("email")
         password = request.form.get("password")
 
-        conn = get_db()
-        user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-        conn.close()
+        try:
+            conn = get_db()
+            user = conn.execute(
+                "SELECT * FROM users WHERE email=?", (email,)
+            ).fetchone()
+        except sqlite3.OperationalError as e:
+            conn = None
+            user = None
+            if "database is locked" in str(e).lower():
+                print(f"Login DB error: {e}")
+                flash(
+                    "The portal database is busy. Please try again in a few moments.",
+                    "danger",
+                )
+                return render_template("login.html")
+            raise
+        finally:
+            if conn:
+                conn.close()
 
         if user and check_password_hash(user["password_hash"], password):
             session.clear()
             session["user_id"] = user["id"]
             session["role"] = user["role"]
             session["name"] = user["name"]
-            session["profile_picture"] = user["profile_picture"] if user["profile_picture"] else "default-avatar.png"
+            session["profile_picture"] = (
+                user["profile_picture"]
+                if user["profile_picture"]
+                else "default-avatar.png"
+            )
             flash(f"Welcome, {user['name']}!", "success")
 
             if user["role"] == "admin":
@@ -2595,11 +3920,13 @@ def login():
 
     return render_template("login.html")
 
+
 @app.route("/logout")
 def logout():
     session.clear()
     flash("Logged out", "info")
     return redirect(url_for("home"))
+
 
 # Student / Alumni Dashboard
 @app.route("/dashboard")
@@ -2609,9 +3936,13 @@ def dashboard():
         return redirect(url_for("home"))
 
     conn = get_db()
-    profile = conn.execute("SELECT * FROM students WHERE user_id=?", (session["user_id"],)).fetchone()
-    user = conn.execute("SELECT academic_data_pending FROM users WHERE id = ?", (session["user_id"],)).fetchone()
-    academic_data_sync_pending = bool(user['academic_data_pending']) if user else False
+    profile = conn.execute(
+        "SELECT * FROM students WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
+    user = conn.execute(
+        "SELECT academic_data_pending FROM users WHERE id = ?", (session["user_id"],)
+    ).fetchone()
+    academic_data_sync_pending = bool(user["academic_data_pending"]) if user else False
     jobs = conn.execute("""
         SELECT j.*, r.company_name, r.id AS company_id
         FROM jobs j
@@ -2628,42 +3959,94 @@ def dashboard():
         ORDER BY j.created_at DESC
         LIMIT 5
     """).fetchall()
-    
+
     # Get applications with status
-    applications = conn.execute("""
+    applications = conn.execute(
+        """
         SELECT j.id as job_id, j.title, ji.created_at as applied_at,
                ji.status, ji.feedback
         FROM job_interests ji
         JOIN jobs j ON ji.job_id = j.id
         WHERE ji.student_id = ?
         ORDER BY ji.created_at DESC
-    """, (session["user_id"],)).fetchall()
-    
-    scraped_jobs = conn.execute("""SELECT * FROM scraped_jobs WHERE status = 'active' ORDER BY scraped_at DESC LIMIT 10""").fetchall()
+    """,
+        (session["user_id"],),
+    ).fetchall()
+
+    scraped_jobs = conn.execute(
+        """SELECT * FROM scraped_jobs WHERE status = 'active' ORDER BY scraped_at DESC LIMIT 10"""
+    ).fetchall()
 
     skill_tokens = []
-    if profile and profile['skills']:
-        skill_tokens = [token.strip().lower() for token in str(profile['skills']).replace(';', ',').split(',') if token.strip()]
+    if profile and profile["skills"]:
+        skill_tokens = [
+            token.strip().lower()
+            for token in str(profile["skills"]).replace(";", ",").split(",")
+            if token.strip()
+        ]
 
     recommended_jobs = []
     for job in jobs:
-        job_text = ' '.join(filter(None, [job['title'], job['description'], job['skills_required'], job['requirements']])).lower()
-        overlap = len(set(skill_tokens).intersection(set(re.findall(r"[A-Za-z0-9+#]+", job_text))))
+        job_text = " ".join(
+            filter(
+                None,
+                [
+                    job["title"],
+                    job["description"],
+                    job["skills_required"],
+                    job["requirements"],
+                ],
+            )
+        ).lower()
+        overlap = len(
+            set(skill_tokens).intersection(set(re.findall(r"[A-Za-z0-9+#]+", job_text)))
+        )
         score = round(overlap / max(1, len(skill_tokens)) if skill_tokens else 0, 2)
         if overlap > 0 or score > 0:
-            recommended_jobs.append({
-                'job_id': job['id'],
-                'title': job['title'],
-                'company_name': job['company_name'],
-                'score': score,
-                'location': job['location'],
-                'salary': job['salary'],
-                'company_id': job['company_id']
-            })
+            recommended_jobs.append(
+                {
+                    "job_id": job["id"],
+                    "title": job["title"],
+                    "company_name": job["company_name"],
+                    "score": score,
+                    "location": job["location"],
+                    "salary": job["salary"],
+                    "company_id": job["company_id"],
+                }
+            )
 
-    recommended_jobs.sort(key=lambda item: (-item['score'], item['title']))
-    completion_fields = [profile['course'] if profile else None, profile['faculty'] if profile else None, profile['gpa'] if profile else None, profile['skills'] if profile else None, profile['internship_status'] if profile else None]
-    completion_percentage = int(round((sum(1 for field in completion_fields if field) / len(completion_fields)) * 100)) if completion_fields else 0
+    recommended_jobs.sort(key=lambda item: (-item["score"], item["title"]))
+    # Get companies to display
+    companies = conn.execute("""
+        SELECT c.id, c.name, c.description, c.industry, c.location, c.logo_url, c.website_url,
+               COUNT(j.id) as job_count
+        FROM companies c
+        LEFT JOIN jobs j ON j.recruiter_id IN (SELECT id FROM recruiters WHERE user_id = c.user_id) AND j.status = 'approved'
+        GROUP BY c.id
+        ORDER BY c.created_at DESC
+        LIMIT 8
+    """).fetchall()
+
+    completion_fields = [
+        profile["course"] if profile else None,
+        profile["faculty"] if profile else None,
+        profile["gpa"] if profile else None,
+        profile["skills"] if profile else None,
+        profile["internship_status"] if profile else None,
+    ]
+    completion_percentage = (
+        int(
+            round(
+                (
+                    sum(1 for field in completion_fields if field)
+                    / len(completion_fields)
+                )
+                * 100
+            )
+        )
+        if completion_fields
+        else 0
+    )
     conn.close()
     return render_template(
         "dashboard.html",
@@ -2672,13 +4055,15 @@ def dashboard():
         applications=applications,
         scraped_jobs=scraped_jobs,
         recent_posted_jobs=recent_posted_jobs,
+        companies=companies,
         academic_data_sync_pending=academic_data_sync_pending,
         recommended_jobs=recommended_jobs[:5],
         completion_percentage=completion_percentage,
-        accepted_apps=sum(1 for app in applications if app['status'] == 'accepted'),
-        pending_apps=sum(1 for app in applications if app['status'] == 'pending'),
-        total_applications=len(applications)
+        accepted_apps=sum(1 for app in applications if app["status"] == "accepted"),
+        pending_apps=sum(1 for app in applications if app["status"] == "pending"),
+        total_applications=len(applications),
     )
+
 
 # Edit Profile
 @app.route("/edit_profile", methods=["GET", "POST"])
@@ -2687,13 +4072,22 @@ def edit_profile():
         return redirect(url_for("home"))
 
     conn = get_db()
-    profile = conn.execute("SELECT * FROM students WHERE user_id=?", (session["user_id"],)).fetchone()
-    user = conn.execute("SELECT * FROM users WHERE id=?", (session["user_id"],)).fetchone()
-    selected_courses = [row["course_name"] for row in conn.execute(
-        "SELECT course_name FROM student_courses WHERE user_id=? ORDER BY semester_number, course_name", (session["user_id"],)
-    ).fetchall()]
+    profile = conn.execute(
+        "SELECT * FROM students WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
+    user = conn.execute(
+        "SELECT * FROM users WHERE id=?", (session["user_id"],)
+    ).fetchone()
+    selected_courses = [
+        row["course_name"]
+        for row in conn.execute(
+            "SELECT course_name FROM student_courses WHERE user_id=? ORDER BY semester_number, course_name",
+            (session["user_id"],),
+        ).fetchall()
+    ]
     import_history = conn.execute(
-        "SELECT * FROM student_data_imports WHERE user_id=? ORDER BY created_at DESC LIMIT 5", (session["user_id"],)
+        "SELECT * FROM student_data_imports WHERE user_id=? ORDER BY created_at DESC LIMIT 5",
+        (session["user_id"],),
     ).fetchall()
 
     if request.method == "POST":
@@ -2706,16 +4100,18 @@ def edit_profile():
         if profile:
             conn.execute(
                 "UPDATE students SET course=?, faculty=?, skills=?, internship_status=? WHERE user_id=?",
-                (course, faculty, skills, internship_status, session["user_id"])
+                (course, faculty, skills, internship_status, session["user_id"]),
             )
         else:
             conn.execute(
                 "INSERT INTO students (user_id, course, faculty, skills, internship_status) VALUES (?,?,?,?,?)",
-                (session["user_id"], course, faculty, skills, internship_status)
+                (session["user_id"], course, faculty, skills, internship_status),
             )
 
         if phone:
-            conn.execute("UPDATE users SET phone = ? WHERE id = ?", (phone, session['user_id']))
+            conn.execute(
+                "UPDATE users SET phone = ? WHERE id = ?", (phone, session["user_id"])
+            )
 
         conn.commit()
         flash("Profile saved", "success")
@@ -2723,7 +4119,14 @@ def edit_profile():
         return redirect(url_for("edit_profile"))
 
     conn.close()
-    return render_template("edit_profile.html", profile=profile, user=user, selected_courses=selected_courses, import_history=import_history)
+    return render_template(
+        "edit_profile.html",
+        profile=profile,
+        user=user,
+        selected_courses=selected_courses,
+        import_history=import_history,
+    )
+
 
 @app.route("/upload_cv", methods=["POST"])
 def upload_cv():
@@ -2731,29 +4134,38 @@ def upload_cv():
         flash("Unauthorized", "danger")
         return redirect(url_for("login"))
 
-    if 'cv' not in request.files:
+    if "cv" not in request.files:
         flash("No file selected", "warning")
         return redirect(url_for("edit_profile"))
 
-    file = request.files['cv']
-    if file.filename == '' or not allowed_file(file.filename):
-        flash('Invalid file. Allowed: PDF, DOC, DOCX, JPG, JPEG, PNG.', 'danger')
-        return redirect(url_for('edit_profile'))
+    file = request.files["cv"]
+    if file.filename == "" or not allowed_file(file.filename):
+        flash("Invalid file. Allowed: PDF, DOC, DOCX, JPG, JPEG, PNG.", "danger")
+        return redirect(url_for("edit_profile"))
 
     filename = secure_filename(f"{session['user_id']}_{file.filename}")
-    file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+    file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
 
     conn = get_db()
-    existing = conn.execute("SELECT 1 FROM students WHERE user_id = ?", (session['user_id'],)).fetchone()
+    existing = conn.execute(
+        "SELECT 1 FROM students WHERE user_id = ?", (session["user_id"],)
+    ).fetchone()
     if existing:
-        conn.execute("UPDATE students SET cv_filename = ? WHERE user_id = ?", (filename, session['user_id']))
+        conn.execute(
+            "UPDATE students SET cv_filename = ? WHERE user_id = ?",
+            (filename, session["user_id"]),
+        )
     else:
-        conn.execute("INSERT INTO students (user_id, cv_filename) VALUES (?, ?)", (session['user_id'], filename))
+        conn.execute(
+            "INSERT INTO students (user_id, cv_filename) VALUES (?, ?)",
+            (session["user_id"], filename),
+        )
     conn.commit()
     conn.close()
 
-    flash('CV uploaded successfully.', 'success')
-    return redirect(url_for('edit_profile'))
+    flash("CV uploaded successfully.", "success")
+    return redirect(url_for("edit_profile"))
+
 
 @app.route("/api/fetch_student_data", methods=["POST"])
 def api_fetch_student_data():
@@ -2765,7 +4177,9 @@ def api_fetch_student_data():
     portal_password = request.form.get("portal_password", "").strip()
 
     if not student_id or not portal_url or not portal_password:
-        return jsonify({"error": "Student ID, portal URL, and password are required."}), 400
+        return jsonify(
+            {"error": "Student ID, portal URL, and password are required."}
+        ), 400
 
     student_data = fetch_from_university_portal(student_id, portal_url, portal_password)
     if not student_data:
@@ -2776,28 +4190,63 @@ def api_fetch_student_data():
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO student_data_imports (user_id, student_id, portal_url, data_json, status) VALUES (?, ?, ?, ?, ?)",
-            (session["user_id"], student_id, portal_url, json.dumps(student_data), "completed")
+            (
+                session["user_id"],
+                student_id,
+                portal_url,
+                json.dumps(student_data),
+                "completed",
+            ),
         )
 
-        existing = cur.execute("SELECT 1 FROM students WHERE user_id=?", (session["user_id"],)).fetchone()
-        internship_status = "Seeking Internship" if session.get("role") == "student" else "Not Seeking"
+        existing = cur.execute(
+            "SELECT 1 FROM students WHERE user_id=?", (session["user_id"],)
+        ).fetchone()
+        internship_status = (
+            "Seeking Internship" if session.get("role") == "student" else "Not Seeking"
+        )
         if existing:
             cur.execute(
                 "UPDATE students SET course=?, faculty=?, gpa=?, graduation_year=?, internship_status=? WHERE user_id=?",
-                (student_data.get("course"), student_data.get("faculty"), student_data.get("gpa"), student_data.get("graduation_year"), internship_status, session["user_id"])
+                (
+                    student_data.get("course"),
+                    student_data.get("faculty"),
+                    student_data.get("gpa"),
+                    student_data.get("graduation_year"),
+                    internship_status,
+                    session["user_id"],
+                ),
             )
         else:
             cur.execute(
                 "INSERT INTO students (user_id, course, faculty, gpa, graduation_year, internship_status, skills) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (session["user_id"], student_data.get("course"), student_data.get("faculty"), student_data.get("gpa"), student_data.get("graduation_year"), internship_status, "")
+                (
+                    session["user_id"],
+                    student_data.get("course"),
+                    student_data.get("faculty"),
+                    student_data.get("gpa"),
+                    student_data.get("graduation_year"),
+                    internship_status,
+                    "",
+                ),
             )
 
-        cur.execute("UPDATE users SET student_id = ? WHERE id = ?", (student_id, session["user_id"]))
+        cur.execute(
+            "UPDATE users SET student_id = ? WHERE id = ?",
+            (student_id, session["user_id"]),
+        )
         conn.commit()
         conn.close()
-        return jsonify({"success": True, "message": "Student portal data imported successfully.", "student_data": student_data})
+        return jsonify(
+            {
+                "success": True,
+                "message": "Student portal data imported successfully.",
+                "student_data": student_data,
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/save_selected_courses", methods=["POST"])
 def save_selected_courses():
@@ -2806,7 +4255,9 @@ def save_selected_courses():
 
     program_name = request.form.get("program_name", "").strip()
     semester = request.form.get("semester", "").strip()
-    selected_courses = request.form.getlist("selected_courses[]") or request.form.getlist("selected_courses")
+    selected_courses = request.form.getlist(
+        "selected_courses[]"
+    ) or request.form.getlist("selected_courses")
 
     if not program_name or not semester:
         return jsonify({"error": "Program name and semester are required."}), 400
@@ -2820,24 +4271,26 @@ def save_selected_courses():
     cur = conn.cursor()
     cur.execute(
         "DELETE FROM student_courses WHERE user_id=? AND program_name=? AND semester_number=?",
-        (session["user_id"], program_name, semester_number)
+        (session["user_id"], program_name, semester_number),
     )
 
     for course_name in selected_courses:
         cur.execute(
             "INSERT INTO student_courses (user_id, program_name, semester_number, course_name, selected) VALUES (?, ?, ?, ?, 1)",
-            (session["user_id"], program_name, semester_number, course_name)
+            (session["user_id"], program_name, semester_number, course_name),
         )
 
     cur.execute(
         "UPDATE students SET selected_courses = ? WHERE user_id = ?",
-        (','.join(selected_courses), session["user_id"])
+        (",".join(selected_courses), session["user_id"]),
     )
     conn.commit()
     conn.close()
     return jsonify({"success": True, "selected_count": len(selected_courses)})
 
+
 # Student Submit Results for Verification
+@app.route("/submit_results_for_verification", methods=["POST"])
 @app.route("/submit_results_for_verification", methods=["POST"])
 def submit_results_for_verification():
     if not session.get("user_id") or session.get("role") not in ["student", "alumni"]:
@@ -2847,7 +4300,131 @@ def submit_results_for_verification():
     results_text = request.form.get("results_text", "").strip()
     results_file = request.files.get("results_file")
 
-    if not result_type or (result_type == 'Select'):
+    if not result_type or (result_type == "Select"):
+        return jsonify({"error": "Please choose a result type"}), 400
+    if not results_text and not results_file:
+        return jsonify({"error": "Please provide either text or file"}), 400
+
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        results_filename = None
+        file_path = None
+        if results_file and results_file.filename:
+            if allowed_file(results_file.filename):
+                filename = secure_filename(
+                    f"{session['user_id']}_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{results_file.filename.rsplit('.', 1)[1].lower()}"
+                )
+                file_path = os.path.join(UPLOAD_FOLDER, filename)
+                results_file.save(file_path)
+                results_filename = filename
+            else:
+                conn.close()
+                return jsonify({"error": "File type not allowed"}), 400
+
+        # AI Verification
+        ai_result = ai_verify_document(results_text, file_path)
+
+        # Generate blockchain certificate hash
+        cert_hash = generate_certificate_hash(
+            session["user_id"], results_text or results_filename or "submitted"
+        )
+
+        # Try to anchor on blockchain
+        blockchain_tx = anchor_certificate_on_chain(cert_hash)
+
+        # Insert verification record
+        cur.execute(
+            """
+            INSERT INTO results_verifications (student_id, result_type, results_text, results_file, certificate_hash, status, anchor_tx)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                session["user_id"],
+                result_type,
+                results_text,
+                results_filename,
+                cert_hash,
+                ai_result["status"],
+                blockchain_tx,
+            ),
+        )
+
+        verification_id = cur.lastrowid
+
+        # Log AI verification result
+        cur.execute(
+            """
+            INSERT INTO blockchain_verification_logs (student_id, verification_id, action, status, confidence_score, ai_analysis, blockchain_tx_hash)
+            VALUES (?, ?, 'AI_VERIFICATION', ?, ?, ?, ?)
+        """,
+            (
+                session["user_id"],
+                verification_id,
+                ai_result["status"],
+                ai_result["confidence"],
+                ai_result["analysis"],
+                blockchain_tx,
+            ),
+        )
+
+        conn.commit()
+
+        # Send notification to admin if needs review
+        if ai_result["status"] == "requires_review":
+            admin_user = cur.execute(
+                "SELECT id FROM users WHERE role = 'admin' LIMIT 1"
+            ).fetchone()
+            if admin_user:
+                notification_msg = f"⚠️ AI FLAG: Student {session['name']} uploaded results that need manual review. Confidence: {ai_result['confidence']}%"
+                cur.execute(
+                    """
+                    INSERT INTO messages (sender_id, receiver_id, message, read_status, created_at)
+                    VALUES (?, ?, ?, 0, ?)
+                """,
+                    (
+                        session["user_id"],
+                        admin_user["id"],
+                        notification_msg,
+                        datetime.now(),
+                    ),
+                )
+
+                # Also log admin alert
+                cur.execute(
+                    """
+                    INSERT INTO broadcast_messages (admin_id, message, sent_to_all)
+                    VALUES (?, ?, 0)
+                """,
+                    (admin_user["id"], notification_msg),
+                )
+                conn.commit()
+
+        conn.close()
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "Results submitted and AI-analyzed",
+                "ai_confidence": ai_result["confidence"],
+                "ai_analysis": ai_result["analysis"],
+                "blockchain_tx": blockchain_tx,
+                "verification_status": ai_result["status"],
+            }
+        )
+
+    except Exception as e:
+        print(f"Error submitting results: {e}")
+        return jsonify({"error": str(e)}), 500
+    if not session.get("user_id") or session.get("role") not in ["student", "alumni"]:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    result_type = request.form.get("result_type", "Other").strip()
+    results_text = request.form.get("results_text", "").strip()
+    results_file = request.files.get("results_file")
+
+    if not result_type or (result_type == "Select"):
         return jsonify({"error": "Please choose a result type"}), 400
     if not results_text and not results_file:
         return jsonify({"error": "Please provide either text or file"}), 400
@@ -2859,7 +4436,9 @@ def submit_results_for_verification():
         results_filename = None
         if results_file and results_file.filename:
             if allowed_file(results_file.filename):
-                filename = secure_filename(f"{session['user_id']}_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{results_file.filename.rsplit('.', 1)[1].lower()}")
+                filename = secure_filename(
+                    f"{session['user_id']}_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{results_file.filename.rsplit('.', 1)[1].lower()}"
+                )
                 results_file.save(os.path.join(UPLOAD_FOLDER, filename))
                 results_filename = filename
             else:
@@ -2867,7 +4446,9 @@ def submit_results_for_verification():
                 return jsonify({"error": "File type not allowed"}), 400
 
         # Generate certificate hash
-        cert_hash = generate_certificate_hash(session["user_id"], results_text or results_filename or "submitted")
+        cert_hash = generate_certificate_hash(
+            session["user_id"], results_text or results_filename or "submitted"
+        )
 
         # Insert verification record
         cur.execute(
@@ -2875,41 +4456,56 @@ def submit_results_for_verification():
             INSERT INTO results_verifications (student_id, result_type, results_text, results_file, certificate_hash, status)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (session["user_id"], result_type, results_text, results_filename, cert_hash, 'pending')
+            (
+                session["user_id"],
+                result_type,
+                results_text,
+                results_filename,
+                cert_hash,
+                "pending",
+            ),
         )
         conn.commit()
 
         # Attempt automatic verification against SIS records
         sis_row = cur.execute(
             "SELECT s.* FROM sis_students s JOIN users u ON u.student_id = s.student_id WHERE u.id = ?",
-            (session["user_id"],)
+            (session["user_id"],),
         ).fetchone()
 
-        status = 'rejected'
-        admin_notes = ''
+        status = "rejected"
+        admin_notes = ""
         if sis_row:
             matched = False
             # Heuristics: match graduation year, GPA, or course name in submitted text
             try:
-                sis_gpa = sis_row['gpa'] if 'gpa' in sis_row.keys() else None
+                sis_gpa = sis_row["gpa"] if "gpa" in sis_row.keys() else None
             except Exception:
                 sis_gpa = None
-            sis_course = sis_row['course'] if 'course' in sis_row.keys() else None
-            sis_grad = sis_row['graduation_year'] if 'graduation_year' in sis_row.keys() else None
+            sis_course = sis_row["course"] if "course" in sis_row.keys() else None
+            sis_grad = (
+                sis_row["graduation_year"]
+                if "graduation_year" in sis_row.keys()
+                else None
+            )
 
             text = (results_text or "").lower()
             if sis_grad and str(sis_grad) in text:
                 matched = True
-            if sis_gpa is not None and (str(sis_gpa) in text or ("{:.1f}".format(sis_gpa) in text)):
+            if sis_gpa is not None and (
+                str(sis_gpa) in text or ("{:.1f}".format(sis_gpa) in text)
+            ):
                 matched = True
             if sis_course and sis_course.lower() in text:
                 matched = True
 
             if matched:
-                status = 'verified'
-                admin_notes = 'Auto-verified via SIS record match'
+                status = "verified"
+                admin_notes = "Auto-verified via SIS record match"
                 # Update students record to mark verified and store certificate hash
-                cur.execute("SELECT id FROM students WHERE user_id = ?", (session['user_id'],))
+                cur.execute(
+                    "SELECT id FROM students WHERE user_id = ?", (session["user_id"],)
+                )
                 stud = cur.fetchone()
                 if stud:
                     # Anchor certificate on-chain if configured
@@ -2918,45 +4514,72 @@ def submit_results_for_verification():
                         anchor_tx = anchor_certificate_on_chain(cert_hash)
                     except Exception:
                         anchor_tx = None
-                    cur.execute("UPDATE students SET certificate_hash = ?, certificate_verified = 1, anchor_tx = ? WHERE user_id = ?", (cert_hash, anchor_tx, session['user_id']))
+                    cur.execute(
+                        "UPDATE students SET certificate_hash = ?, certificate_verified = 1, anchor_tx = ? WHERE user_id = ?",
+                        (cert_hash, anchor_tx, session["user_id"]),
+                    )
                 else:
                     anchor_tx = None
                     try:
                         anchor_tx = anchor_certificate_on_chain(cert_hash)
                     except Exception:
                         anchor_tx = None
-                    cur.execute("INSERT INTO students (user_id, certificate_hash, certificate_verified, anchor_tx) VALUES (?,?,?,?)", (session['user_id'], cert_hash, 1, anchor_tx))
+                    cur.execute(
+                        "INSERT INTO students (user_id, certificate_hash, certificate_verified, anchor_tx) VALUES (?,?,?,?)",
+                        (session["user_id"], cert_hash, 1, anchor_tx),
+                    )
             else:
-                status = 'rejected'
-                admin_notes = 'Auto-rejected: submission did not match SIS records'
+                status = "rejected"
+                admin_notes = "Auto-rejected: submission did not match SIS records"
         else:
-            status = 'rejected'
-            admin_notes = 'Auto-rejected: no SIS record found for this account'
+            status = "rejected"
+            admin_notes = "Auto-rejected: no SIS record found for this account"
 
         # Update verification record with result (and anchor tx if available)
         try:
             # fetch anchor_tx from students table if set
-            anchor_row = cur.execute("SELECT anchor_tx FROM students WHERE user_id = ?", (session['user_id'],)).fetchone()
-            anchor_tx_val = anchor_row['anchor_tx'] if anchor_row and 'anchor_tx' in anchor_row.keys() else None
+            anchor_row = cur.execute(
+                "SELECT anchor_tx FROM students WHERE user_id = ?",
+                (session["user_id"],),
+            ).fetchone()
+            anchor_tx_val = (
+                anchor_row["anchor_tx"]
+                if anchor_row and "anchor_tx" in anchor_row.keys()
+                else None
+            )
         except Exception:
             anchor_tx_val = None
         cur.execute(
             "UPDATE results_verifications SET status = ?, admin_notes = ?, verified_at = CURRENT_TIMESTAMP, anchor_tx = ? WHERE certificate_hash = ?",
-            (status, admin_notes, anchor_tx_val, cert_hash)
+            (status, admin_notes, anchor_tx_val, cert_hash),
         )
         conn.commit()
 
         # Notify user via SocketIO
         try:
-            socketio.emit('verification_update', {'user_id': session['user_id'], 'status': status, 'message': admin_notes})
+            socketio.emit(
+                "verification_update",
+                {
+                    "user_id": session["user_id"],
+                    "status": status,
+                    "message": admin_notes,
+                },
+            )
         except Exception:
             pass
 
         conn.close()
-        return jsonify({"success": True, "message": "Results submitted and processed", "status": status})
+        return jsonify(
+            {
+                "success": True,
+                "message": "Results submitted and processed",
+                "status": status,
+            }
+        )
     except Exception as e:
         print(f"Error submitting results: {e}")
         return jsonify({"error": str(e)}), 500
+
 
 # Profile Picture Upload
 @app.route("/upload_profile_picture", methods=["POST"])
@@ -2964,34 +4587,40 @@ def upload_profile_picture():
     if not session.get("user_id"):
         flash("Please login", "danger")
         return redirect(url_for("login"))
-    
-    if session.get("role") not in ['student', 'alumni']:
+
+    if session.get("role") not in ["student", "alumni"]:
         flash("Only students and alumni can upload profile pictures.", "danger")
         return redirect(request.referrer)
-    
-    if 'profile_pic' not in request.files:
+
+    if "profile_pic" not in request.files:
         flash("No file selected", "danger")
         return redirect(request.referrer)
-    
-    file = request.files['profile_pic']
-    if file.filename == '':
+
+    file = request.files["profile_pic"]
+    if file.filename == "":
         flash("No file selected", "danger")
         return redirect(request.referrer)
-    
+
     if file and allowed_file(file.filename):
-        ext = file.filename.rsplit('.', 1)[1].lower()
-        filename = secure_filename(f"user_{session['user_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}.{ext}")
-        file.save(os.path.join(app.config['PROFILE_PIC_FOLDER'], filename))
+        ext = file.filename.rsplit(".", 1)[1].lower()
+        filename = secure_filename(
+            f"user_{session['user_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}.{ext}"
+        )
+        file.save(os.path.join(app.config["PROFILE_PIC_FOLDER"], filename))
         conn = get_db()
-        conn.execute("UPDATE users SET profile_picture = ? WHERE id = ?", (filename, session["user_id"]))
+        conn.execute(
+            "UPDATE users SET profile_picture = ? WHERE id = ?",
+            (filename, session["user_id"]),
+        )
         conn.commit()
         conn.close()
         session["profile_picture"] = filename
         flash("Profile picture updated!", "success")
     else:
         flash("Invalid file type. Allowed: jpg, jpeg, png", "danger")
-    
+
     return redirect(request.referrer)
+
 
 # Recruiter Dashboard
 @app.route("/recruiter_dashboard")
@@ -3001,9 +4630,16 @@ def recruiter_dashboard():
         return redirect(url_for("home"))
 
     conn = get_db()
-    recruiter = conn.execute("SELECT * FROM recruiters WHERE user_id=?", (session["user_id"],)).fetchone()
-    jobs = conn.execute("SELECT * FROM jobs WHERE recruiter_id=(SELECT id FROM recruiters WHERE user_id=?)", (session["user_id"],)).fetchall()
-    student_count = conn.execute("SELECT COUNT(*) FROM users u JOIN students s ON u.id=s.user_id WHERE u.role IN ('student','alumni')").fetchone()[0]
+    recruiter = conn.execute(
+        "SELECT * FROM recruiters WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
+    jobs = conn.execute(
+        "SELECT * FROM jobs WHERE recruiter_id=(SELECT id FROM recruiters WHERE user_id=?)",
+        (session["user_id"],),
+    ).fetchall()
+    student_count = conn.execute(
+        "SELECT COUNT(*) FROM users u JOIN students s ON u.id=s.user_id WHERE u.role IN ('student','alumni')"
+    ).fetchone()[0]
     available_students = conn.execute("""
         SELECT u.id, u.name, u.email, s.course, s.faculty, s.gpa, s.skills, s.certificate_hash
         FROM users u
@@ -3012,21 +4648,79 @@ def recruiter_dashboard():
         ORDER BY u.name
         LIMIT 6
     """).fetchall()
-    recent_activity = conn.execute("""
+    recent_activity = conn.execute(
+        """
         SELECT title, message, created_at
         FROM notifications
         WHERE user_id = ?
         ORDER BY created_at DESC
         LIMIT 6
-    """, (session['user_id'],)).fetchall()
-    candidate_matches = generate_recruiter_matches(recruiter['id']) if recruiter else []
-    total_applications = conn.execute("SELECT COUNT(*) FROM job_interests ji JOIN jobs j ON ji.job_id = j.id WHERE j.recruiter_id = ?", (recruiter['id'],)).fetchone()[0] if recruiter else 0
-    approved_jobs = conn.execute("SELECT COUNT(*) FROM jobs WHERE recruiter_id = ? AND status='approved'", (recruiter['id'],)).fetchone()[0] if recruiter else 0
+    """,
+        (session["user_id"],),
+    ).fetchall()
+    candidate_matches = generate_recruiter_matches(recruiter["id"]) if recruiter else []
+    total_applications = (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_interests ji JOIN jobs j ON ji.job_id = j.id WHERE j.recruiter_id = ?",
+            (recruiter["id"],),
+        ).fetchone()[0]
+        if recruiter
+        else 0
+    )
+    approved_jobs = (
+        conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE recruiter_id = ? AND status='approved'",
+            (recruiter["id"],),
+        ).fetchone()[0]
+        if recruiter
+        else 0
+    )
     total_jobs = len(jobs)
-    active_jobs = conn.execute("SELECT COUNT(*) FROM jobs WHERE recruiter_id = ? AND is_active = 1 AND is_filled = 0", (recruiter['id'],)).fetchone()[0] if recruiter else 0
-    filled_jobs = conn.execute("SELECT COUNT(*) FROM jobs WHERE recruiter_id = ? AND is_filled = 1", (recruiter['id'],)).fetchone()[0] if recruiter else 0
-    closed_jobs = conn.execute("SELECT COUNT(*) FROM jobs WHERE recruiter_id = ? AND is_active = 0 AND is_filled = 0", (recruiter['id'],)).fetchone()[0] if recruiter else 0
-    profile_completion = round((sum(1 for field in [recruiter['company_name'], recruiter['website'], recruiter['description'], recruiter['website_logo_url'], recruiter['industry']] if field) / 5) * 100) if recruiter else 0
+    active_jobs = (
+        conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE recruiter_id = ? AND is_active = 1 AND is_filled = 0",
+            (recruiter["id"],),
+        ).fetchone()[0]
+        if recruiter
+        else 0
+    )
+    filled_jobs = (
+        conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE recruiter_id = ? AND is_filled = 1",
+            (recruiter["id"],),
+        ).fetchone()[0]
+        if recruiter
+        else 0
+    )
+    closed_jobs = (
+        conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE recruiter_id = ? AND is_active = 0 AND is_filled = 0",
+            (recruiter["id"],),
+        ).fetchone()[0]
+        if recruiter
+        else 0
+    )
+    profile_completion = (
+        round(
+            (
+                sum(
+                    1
+                    for field in [
+                        recruiter["company_name"],
+                        recruiter["website"],
+                        recruiter["description"],
+                        recruiter["website_logo_url"],
+                        recruiter["industry"],
+                    ]
+                    if field
+                )
+                / 5
+            )
+            * 100
+        )
+        if recruiter
+        else 0
+    )
     conn.close()
     return render_template(
         "recruiter_dashboard.html",
@@ -3042,8 +4736,70 @@ def recruiter_dashboard():
         active_jobs=active_jobs,
         filled_jobs=filled_jobs,
         closed_jobs=closed_jobs,
-        profile_completion=profile_completion
+        profile_completion=profile_completion,
     )
+
+
+@app.route("/admin/blockchain_logs")
+def admin_blockchain_logs():
+    if session.get("role") != "admin":
+        flash("Access denied", "danger")
+        return redirect(url_for("home"))
+
+    conn = get_db()
+    logs = conn.execute("""
+        SELECT bvl.*, u.name as student_name, u.email as student_email,
+               rv.result_type, rv.results_text, rv.results_file, rv.status as verification_status
+        FROM blockchain_verification_logs bvl
+        JOIN users u ON bvl.student_id = u.id
+        JOIN results_verifications rv ON bvl.verification_id = rv.id
+        ORDER BY bvl.created_at DESC
+        LIMIT 100
+    """).fetchall()
+
+    conn.close()
+    return render_template("blockchain_logs.html", logs=logs)
+
+
+@app.route("/admin/reply_to_student", methods=["POST"])
+def admin_reply_to_student():
+    if session.get("role") != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
+
+    data = request.get_json()
+    student_id = data.get("student_id")
+    message = data.get("message", "").strip()
+    verification_id = data.get("verification_id")
+
+    if not student_id or not message:
+        return jsonify({"error": "Missing data"}), 400
+
+    conn = get_db()
+
+    # Send message to student
+    conn.execute(
+        """
+        INSERT INTO messages (sender_id, receiver_id, message, read_status, created_at)
+        VALUES (?, ?, ?, 0, ?)
+    """,
+        (session["user_id"], student_id, message, datetime.now()),
+    )
+
+    # Log the admin response
+    if verification_id:
+        conn.execute(
+            """
+            INSERT INTO blockchain_verification_logs (student_id, verification_id, action, status, admin_notes)
+            VALUES (?, ?, 'ADMIN_REVIEW', 'reviewed', ?)
+        """,
+            (student_id, verification_id, message[:500]),
+        )
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"success": True, "message": "Reply sent to student"})
+
 
 @app.route("/recruiter/<int:recruiter_id>")
 def recruiter_profile(recruiter_id):
@@ -3055,7 +4811,7 @@ def recruiter_profile(recruiter_id):
     conn = get_db()
     recruiter = conn.execute(
         "SELECT r.*, u.email, u.name FROM recruiters r JOIN users u ON r.user_id=u.id WHERE r.id=?",
-        (recruiter_id,)
+        (recruiter_id,),
     ).fetchone()
     conn.close()
 
@@ -3065,6 +4821,7 @@ def recruiter_profile(recruiter_id):
 
     return render_template("recruiter_profile.html", recruiter=recruiter)
 
+
 # Post Job
 @app.route("/post_job", methods=["GET", "POST"])
 def post_job():
@@ -3073,11 +4830,16 @@ def post_job():
         return redirect(url_for("home"))
 
     conn = get_db()
-    verified = conn.execute("SELECT verified FROM recruiters WHERE user_id=?", (session["user_id"],)).fetchone()
+    verified = conn.execute(
+        "SELECT verified FROM recruiters WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
     conn.close()
 
     if not verified or verified["verified"] == 0:
-        flash("Your recruiter account is still pending admin approval. You cannot post jobs yet.", "warning")
+        flash(
+            "Your recruiter account is still pending admin approval. You cannot post jobs yet.",
+            "warning",
+        )
         return redirect(url_for("recruiter_dashboard"))
 
     if request.method == "POST":
@@ -3095,16 +4857,30 @@ def post_job():
         conn = get_db()
         cur = conn.cursor()
 
-        recruiter = cur.execute("SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)).fetchone()
+        recruiter = cur.execute(
+            "SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)
+        ).fetchone()
         if not recruiter:
             flash("Recruiter profile not found", "danger")
             conn.close()
             return redirect(url_for("recruiter_dashboard"))
 
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO jobs (recruiter_id, title, description, requirements, skills_required, location, salary, status, is_active, is_filled, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 1, 0, ?)
-        """, (recruiter["id"], title, description, requirements, skills_required, location, salary, datetime.now()))
+        """,
+            (
+                recruiter["id"],
+                title,
+                description,
+                requirements,
+                skills_required,
+                location,
+                salary,
+                datetime.now(),
+            ),
+        )
 
         job_id = cur.lastrowid
         conn.commit()
@@ -3130,7 +4906,9 @@ def edit_job(job_id):
         return redirect(url_for("home"))
 
     conn = get_db()
-    recruiter = conn.execute("SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)).fetchone()
+    recruiter = conn.execute(
+        "SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
     job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     if not recruiter or not job or job["recruiter_id"] != recruiter["id"]:
         conn.close()
@@ -3150,11 +4928,23 @@ def edit_job(job_id):
             conn.close()
             return render_template("post_job.html", job=job)
 
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE jobs
             SET title = ?, description = ?, requirements = ?, skills_required = ?, location = ?, salary = ?, updated_at = ?
             WHERE id = ?
-        """, (title, description, requirements, skills_required, location, salary, datetime.now(), job_id))
+        """,
+            (
+                title,
+                description,
+                requirements,
+                skills_required,
+                location,
+                salary,
+                datetime.now(),
+                job_id,
+            ),
+        )
         conn.commit()
         conn.close()
         flash("Job updated successfully.", "success")
@@ -3171,7 +4961,9 @@ def delete_job(job_id):
         return redirect(url_for("home"))
 
     conn = get_db()
-    recruiter = conn.execute("SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)).fetchone()
+    recruiter = conn.execute(
+        "SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
     job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     if recruiter and job and job["recruiter_id"] == recruiter["id"]:
         conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
@@ -3190,14 +4982,19 @@ def mark_job_filled(job_id):
         return redirect(url_for("home"))
 
     conn = get_db()
-    recruiter = conn.execute("SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)).fetchone()
+    recruiter = conn.execute(
+        "SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
     job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     if recruiter and job and job["recruiter_id"] == recruiter["id"]:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE jobs
             SET is_filled = 1, is_active = 0, updated_at = ?
             WHERE id = ?
-        """, (datetime.now(), job_id))
+        """,
+            (datetime.now(), job_id),
+        )
         conn.commit()
         flash("Job marked as filled.", "success")
     else:
@@ -3213,14 +5010,19 @@ def mark_job_closed(job_id):
         return redirect(url_for("home"))
 
     conn = get_db()
-    recruiter = conn.execute("SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)).fetchone()
+    recruiter = conn.execute(
+        "SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
     job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     if recruiter and job and job["recruiter_id"] == recruiter["id"]:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE jobs
             SET is_active = 0, updated_at = ?
             WHERE id = ?
-        """, (datetime.now(), job_id))
+        """,
+            (datetime.now(), job_id),
+        )
         conn.commit()
         flash("Job marked as closed.", "success")
     else:
@@ -3237,7 +5039,9 @@ def job_recommendations(job_id):
         return redirect(url_for("home"))
 
     conn = get_db()
-    recruiter = conn.execute("SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)).fetchone()
+    recruiter = conn.execute(
+        "SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
     job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
 
     if not recruiter or not job or job["recruiter_id"] != recruiter["id"]:
@@ -3255,7 +5059,7 @@ def job_recommendations(job_id):
         ORDER BY jr.score DESC
         LIMIT 20
         """,
-        (job_id,)
+        (job_id,),
     ).fetchall()
 
     if not recommendations:
@@ -3271,13 +5075,16 @@ def job_recommendations(job_id):
                 ORDER BY jr.score DESC
                 LIMIT 20
                 """,
-                (job_id,)
+                (job_id,),
             ).fetchall()
         except Exception as e:
             print(f"Recommendation refresh failed: {e}")
 
     conn.close()
-    return render_template("job_recommendations.html", job=job, recommendations=recommendations)
+    return render_template(
+        "job_recommendations.html", job=job, recommendations=recommendations
+    )
+
 
 # Search Students
 @app.route("/search_students", methods=["GET", "POST"])
@@ -3287,7 +5094,9 @@ def search_students():
         return redirect(url_for("home"))
 
     conn = get_db()
-    verified_row = conn.execute("SELECT verified FROM recruiters WHERE user_id=?", (session["user_id"],)).fetchone()
+    verified_row = conn.execute(
+        "SELECT verified FROM recruiters WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
     verified = verified_row["verified"] if verified_row else 0
 
     results = []
@@ -3344,13 +5153,14 @@ def search_students():
     conn.close()
     return render_template("search_students.html", results=results, limited=limited)
 
+
 # Recruiter Alumni View
 @app.route("/recruiter/alumni")
 def recruiter_alumni():
     if session.get("role") != "recruiter":
         flash("Access denied", "danger")
         return redirect(url_for("home"))
-    
+
     conn = get_db()
     alumni = conn.execute("""
         SELECT u.id, u.name, u.email, s.course, s.faculty, s.gpa, s.skills, s.cv_filename, s.results, s.certificate_hash
@@ -3359,17 +5169,18 @@ def recruiter_alumni():
         WHERE u.role IN ('student', 'alumni')
         ORDER BY s.faculty, u.name
     """).fetchall()
-    
+
     # Group by faculty
-    faculty_order = ['FICT', 'FABE', 'FBMG', 'FCMB', 'FCTH', 'FDI', 'Other']
+    faculty_order = ["FICT", "FABE", "FBMG", "FCMB", "FCTH", "FDI", "Other"]
     faculty_groups = {fac: [] for fac in faculty_order}
     for a in alumni:
-        faculty = a['faculty'] if a['faculty'] in faculty_order else 'Other'
+        faculty = a["faculty"] if a["faculty"] in faculty_order else "Other"
         faculty_groups[faculty].append(a)
     faculty_groups = {k: v for k, v in faculty_groups.items() if v}
-    
+
     conn.close()
     return render_template("recruiter_alumni.html", faculty_groups=faculty_groups)
+
 
 @app.route("/student/<int:user_id>")
 def student_detail(user_id):
@@ -3378,13 +5189,17 @@ def student_detail(user_id):
         return redirect(url_for("login"))
 
     conn = get_db()
-    student = conn.execute("SELECT u.id, u.name, u.email, s.course, s.faculty, s.gpa, s.skills, s.cv_filename, s.graduation_year, s.internship_status FROM users u JOIN students s ON u.id = s.user_id WHERE u.id = ?", (user_id,)).fetchone()
+    student = conn.execute(
+        "SELECT u.id, u.name, u.email, s.course, s.faculty, s.gpa, s.skills, s.cv_filename, s.graduation_year, s.internship_status FROM users u JOIN students s ON u.id = s.user_id WHERE u.id = ?",
+        (user_id,),
+    ).fetchone()
     conn.close()
     if not student:
         flash("Student not found.", "danger")
         return redirect(url_for("home"))
 
     return render_template("student_detail.html", student=student)
+
 
 @app.route("/student/<int:student_id>/projects")
 def student_projects(student_id):
@@ -3393,15 +5208,22 @@ def student_projects(student_id):
         return redirect(url_for("login"))
 
     conn = get_db()
-    student = conn.execute("SELECT u.id, u.name, s.course, s.faculty FROM users u JOIN students s ON u.id = s.user_id WHERE u.id = ?", (student_id,)).fetchone()
+    student = conn.execute(
+        "SELECT u.id, u.name, s.course, s.faculty FROM users u JOIN students s ON u.id = s.user_id WHERE u.id = ?",
+        (student_id,),
+    ).fetchone()
     if not student:
         conn.close()
         flash("Student not found.", "danger")
         return redirect(url_for("home"))
 
-    projects = conn.execute("SELECT id, title, description, link, created_at FROM projects WHERE user_id = ? ORDER BY created_at DESC", (student_id,)).fetchall()
+    projects = conn.execute(
+        "SELECT id, title, description, link, created_at FROM projects WHERE user_id = ? ORDER BY created_at DESC",
+        (student_id,),
+    ).fetchall()
     conn.close()
     return render_template("student_projects.html", student=student, projects=projects)
+
 
 # Recruiter views interested students for their job
 @app.route("/recruiter/job/<int:job_id>/interested")
@@ -3411,15 +5233,20 @@ def job_interested_students(job_id):
         return redirect(url_for("home"))
 
     conn = get_db()
-    job = conn.execute("SELECT recruiter_id, title FROM jobs WHERE id=?", (job_id,)).fetchone()
-    recruiter_id = conn.execute("SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)).fetchone()
-    
+    job = conn.execute(
+        "SELECT recruiter_id, title FROM jobs WHERE id=?", (job_id,)
+    ).fetchone()
+    recruiter_id = conn.execute(
+        "SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
+
     if not job or job["recruiter_id"] != recruiter_id["id"]:
         flash("Access denied", "danger")
         conn.close()
         return redirect(url_for("recruiter_dashboard"))
 
-    interested = conn.execute("""
+    interested = conn.execute(
+        """
         SELECT u.name, u.email, s.course, s.faculty, s.gpa, s.cv_filename, u.id as user_id,
                ji.id as application_id, ji.status, ji.feedback
         FROM job_interests ji
@@ -3427,10 +5254,18 @@ def job_interested_students(job_id):
         JOIN students s ON u.id = s.user_id
         WHERE ji.job_id = ?
         ORDER BY ji.created_at DESC
-    """, (job_id,)).fetchall()
+    """,
+        (job_id,),
+    ).fetchall()
 
     conn.close()
-    return render_template("job_interested.html", interested=interested, job_id=job_id, job_title=job['title'])
+    return render_template(
+        "job_interested.html",
+        interested=interested,
+        job_id=job_id,
+        job_title=job["title"],
+    )
+
 
 # Update Application Status
 @app.route("/recruiter/update_application/<int:application_id>", methods=["POST"])
@@ -3438,39 +5273,50 @@ def update_application_status(application_id):
     if session.get("role") != "recruiter":
         flash("Access denied", "danger")
         return redirect(url_for("home"))
-    
+
     new_status = request.form.get("status")
     feedback = request.form.get("feedback", "")
-    
+
     conn = get_db()
-    app_data = conn.execute("""
+    app_data = conn.execute(
+        """
         SELECT ji.*, j.recruiter_id, j.title, u.email as student_email, u.name as student_name
         FROM job_interests ji
         JOIN jobs j ON ji.job_id = j.id
         JOIN users u ON ji.student_id = u.id
         WHERE ji.id = ?
-    """, (application_id,)).fetchone()
-    
-    recruiter_id = conn.execute("SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)).fetchone()
-    
+    """,
+        (application_id,),
+    ).fetchone()
+
+    recruiter_id = conn.execute(
+        "SELECT id FROM recruiters WHERE user_id=?", (session["user_id"],)
+    ).fetchone()
+
     if not app_data or app_data["recruiter_id"] != recruiter_id["id"]:
         flash("Unauthorized", "danger")
         conn.close()
         return redirect(url_for("recruiter_dashboard"))
-    
-    conn.execute("""
+
+    conn.execute(
+        """
         UPDATE job_interests SET status = ?, feedback = ?, updated_at = ? WHERE id = ?
-    """, (new_status, feedback, datetime.now(), application_id))
+    """,
+        (new_status, feedback, datetime.now(), application_id),
+    )
     conn.commit()
-    
+
     # Send email notification
-    send_email(app_data["student_email"],
-               f"Application Status Update: {app_data['title']}",
-               f"Dear {app_data['student_name']},\n\nYour application for '{app_data['title']}' has been {new_status}.\n\nFeedback: {feedback if feedback else 'No additional feedback provided.'}\n\nLogin to your dashboard for more details.")
-    
+    send_email(
+        app_data["student_email"],
+        f"Application Status Update: {app_data['title']}",
+        f"Dear {app_data['student_name']},\n\nYour application for '{app_data['title']}' has been {new_status}.\n\nFeedback: {feedback if feedback else 'No additional feedback provided.'}\n\nLogin to your dashboard for more details.",
+    )
+
     conn.close()
     flash(f"Application marked as {new_status} and student notified.", "success")
     return redirect(url_for("job_interested_students", job_id=app_data["job_id"]))
+
 
 # Admin Dashboard
 @app.route("/admin_dashboard")
@@ -3480,10 +5326,16 @@ def admin_dashboard():
         return redirect(url_for("home"))
 
     conn = get_db()
+
     total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     total_students = conn.execute("SELECT COUNT(*) FROM students").fetchone()[0]
+    total_alumni = conn.execute(
+        "SELECT COUNT(*) FROM users WHERE role = 'alumni'"
+    ).fetchone()[0]
     total_companies = conn.execute("SELECT COUNT(*) FROM recruiters").fetchone()[0]
-    total_jobs = conn.execute("SELECT COUNT(*) FROM jobs WHERE status='approved'").fetchone()[0]
+    total_jobs = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE status='approved'"
+    ).fetchone()[0]
 
     students = conn.execute("""
         SELECT u.id, u.name, u.email, u.role, s.course, s.faculty, s.gpa, s.skills, s.cv_filename
@@ -3492,11 +5344,11 @@ def admin_dashboard():
         WHERE u.role IN ('student', 'alumni')
         ORDER BY s.faculty, u.name
     """).fetchall()
-    
-    faculty_order = ['FICT', 'FABE', 'FBMG', 'FCMB', 'FCTH', 'FDI', 'Other']
+
+    faculty_order = ["FICT", "FABE", "FBMG", "FCMB", "FCTH", "FDI", "Other"]
     students_by_faculty = {fac: [] for fac in faculty_order}
     for s in students:
-        faculty = s['faculty'] if s['faculty'] in faculty_order else 'Other'
+        faculty = s["faculty"] if s["faculty"] in faculty_order else "Other"
         students_by_faculty[faculty].append(s)
 
     recruiters = conn.execute("""
@@ -3505,8 +5357,7 @@ def admin_dashboard():
         JOIN users u ON r.user_id = u.id 
         ORDER BY u.name
     """).fetchall()
-    
-    
+
     jobs = conn.execute("""
         SELECT j.*, r.company_name, u.name as recruiter_name 
         FROM jobs j 
@@ -3515,8 +5366,12 @@ def admin_dashboard():
         ORDER BY j.id DESC
     """).fetchall()
 
-    pending_results = conn.execute("SELECT rv.*, u.name, u.email, s.course FROM results_verifications rv JOIN users u ON rv.student_id = u.id JOIN students s ON u.id = s.user_id WHERE rv.status = 'pending' ORDER BY rv.created_at DESC").fetchall()
-    pending_results_count = conn.execute("SELECT COUNT(*) FROM results_verifications WHERE status = 'pending'").fetchone()[0]
+    pending_results = conn.execute(
+        "SELECT rv.*, u.name, u.email, s.course FROM results_verifications rv JOIN users u ON rv.student_id = u.id JOIN students s ON u.id = s.user_id WHERE rv.status = 'pending' ORDER BY rv.created_at DESC"
+    ).fetchall()
+    pending_results_count = conn.execute(
+        "SELECT COUNT(*) FROM results_verifications WHERE status = 'pending'"
+    ).fetchone()[0]
 
     broadcasts = conn.execute("""
         SELECT bm.*, u.name as admin_name, u.email as admin_email
@@ -3534,8 +5389,10 @@ def admin_dashboard():
         ORDER BY cc.created_at DESC
         LIMIT 20
     """).fetchall()
-    escalated_count = conn.execute("SELECT COUNT(*) FROM chatbot_conversations WHERE escalated_to_admin = 1").fetchone()[0]
-    
+    escalated_count = conn.execute(
+        "SELECT COUNT(*) FROM chatbot_conversations WHERE escalated_to_admin = 1"
+    ).fetchone()[0]
+
     # Monitoring data
     flagged = conn.execute("""
         SELECT mf.*, u1.name as sender, u2.name as receiver
@@ -3546,7 +5403,7 @@ def admin_dashboard():
         ORDER BY mf.created_at DESC
         LIMIT 100
     """).fetchall()
-    
+
     recent_chats = conn.execute("""
         SELECT 
             m.*,
@@ -3562,7 +5419,7 @@ def admin_dashboard():
         ORDER BY m.created_at DESC
         LIMIT 200
     """).fetchall()
-    
+
     suspicious_users = conn.execute("""
         SELECT 
             u.id, u.name, u.email, u.role,
@@ -3576,42 +5433,47 @@ def admin_dashboard():
         HAVING unique_contacts > 30 OR total_messages > 200
         ORDER BY unique_contacts DESC
     """).fetchall()
-    
+
     users_with_phones = conn.execute("""
         SELECT name, phone, role
         FROM users 
         WHERE phone IS NOT NULL AND phone != ''
         ORDER BY name
     """).fetchall()
-    
+
     conn.close()
 
-    return render_template("admin_dashboard.html", 
-                         total_users=total_users,
-                         total_students=total_students,
-                         total_companies=total_companies,
-                         total_jobs=total_jobs,
-                         students_by_faculty=students_by_faculty,
-                         recruiters=recruiters, 
-                         jobs=jobs,
-                         pending_results=pending_results,
-                         pending_results_count=pending_results_count,
-                         broadcasts=broadcasts,
-                         escalated_conversations=escalated_conversations,
-                         escalated_count=escalated_count,
-                         flagged=flagged,
-                         recent_chats=recent_chats,
-                         suspicious_users=suspicious_users,
-                         users_with_phones=users_with_phones)
+    return render_template(
+        "admin_dashboard.html",
+        total_users=total_users,
+        total_students=total_students,
+        total_alumni=total_alumni,
+        total_companies=total_companies,
+        total_jobs=total_jobs,
+        students_by_faculty=students_by_faculty,
+        recruiters=recruiters,
+        jobs=jobs,
+        pending_results=pending_results,
+        pending_results_count=pending_results_count,
+        broadcasts=broadcasts,
+        escalated_conversations=escalated_conversations,
+        escalated_count=escalated_count,
+        flagged=flagged,
+        recent_chats=recent_chats,
+        suspicious_users=suspicious_users,
+        users_with_phones=users_with_phones,
+    )
+
 
 # ===================== ADMIN RESULTS VERIFICATION =====================
+
 
 @app.route("/admin/pending_results")
 def admin_pending_results():
     """Get pending results verifications for admin review"""
     if session.get("role") != "admin":
         return jsonify({"error": "Unauthorized"}), 403
-    
+
     conn = get_db()
     pending = conn.execute("""
         SELECT rv.*, u.name, u.email, s.course
@@ -3621,9 +5483,10 @@ def admin_pending_results():
         WHERE rv.status = 'pending'
         ORDER BY rv.created_at DESC
     """).fetchall()
-    
+
     conn.close()
     return jsonify([dict(row) for row in pending])
+
 
 @app.route("/admin/verify_results_page")
 def verify_results_page():
@@ -3631,174 +5494,219 @@ def verify_results_page():
     if session.get("role") != "admin":
         flash("Unauthorized", "danger")
         return redirect(url_for("login"))
-    
+
     return render_template("verify_results.html")
+
 
 @app.route("/admin/verify_results/<int:verification_id>", methods=["POST"])
 def admin_verify_results(verification_id):
     """Admin verifies or rejects student results"""
     if session.get("role") != "admin":
         return jsonify({"error": "Unauthorized"}), 403
-    
+
     data = request.get_json()
     action = data.get("action")  # 'approve' or 'reject'
     notes = data.get("notes", "").strip()
-    
+
     if action not in ["approve", "reject"]:
         return jsonify({"error": "Invalid action"}), 400
-    
+
     conn = get_db()
-    
+
     # Get the verification record
-    verification = conn.execute("""
+    verification = conn.execute(
+        """
         SELECT * FROM results_verifications WHERE id = ?
-    """, (verification_id,)).fetchone()
-    
+    """,
+        (verification_id,),
+    ).fetchone()
+
     if not verification:
         conn.close()
         return jsonify({"error": "Verification not found"}), 404
-    
+
     # Update verification status
     status = "verified" if action == "approve" else "rejected"
-    conn.execute("""
+    conn.execute(
+        """
         UPDATE results_verifications
         SET status = ?, admin_notes = ?, verified_by = ?, verified_at = CURRENT_TIMESTAMP
         WHERE id = ?
-    """, (status, notes, session["user_id"], verification_id))
-    
-    # If approved, update student profile and create alert message
+    """,
+        (status, notes, session["user_id"], verification_id),
+    )
+
+    # Get student and admin users
+    admin_user = conn.execute(
+        "SELECT id FROM users WHERE role = 'admin' LIMIT 1"
+    ).fetchone()
+    student_user = conn.execute(
+        "SELECT id, name FROM users WHERE id = ?", (verification["student_id"],)
+    ).fetchone()
+
+    # If approved, update student profile and send notification
     if action == "approve":
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE students
             SET certificate_verified = 1, certificate_hash = ?
             WHERE user_id = ?
-        """, (verification["certificate_hash"], verification["student_id"]))
-        
-        # Insert admin alert message
-        admin_user = conn.execute("SELECT id FROM users WHERE role = 'admin' AND email = 'admin@portal.co.ls'").fetchone()
-        student_user = conn.execute("SELECT name FROM users WHERE id = ?", (verification["student_id"],)).fetchone()
-        
+        """,
+            (verification["certificate_hash"], verification["student_id"]),
+        )
+
+        # Send message to student notifying them of verification
         if admin_user and student_user:
-            alert_msg = f"✅ Results Verified: {student_user['name']}'s results/certificate have been verified and are blockchain-certified."
-            # Store as an admin broadcast/alert rather than a pinned message in the admin inbox
+            notification_msg = f"✅ Your results have been verified successfully! Your credentials are now blockchain-certified and verified."
+            conn.execute(
+                """
+                INSERT INTO messages (sender_id, receiver_id, message, is_read)
+                VALUES (?, ?, ?, 0)
+            """,
+                (admin_user["id"], student_user["id"], notification_msg),
+            )
+
+            # Also log admin alert
+            admin_alert = f"✅ Results Verified: {student_user['name']}'s results have been verified and are blockchain-certified."
             try:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO broadcast_messages (admin_id, message, sent_to_all)
                     VALUES (?, ?, 0)
-                """, (admin_user['id'], alert_msg))
+                """,
+                    (admin_user["id"], admin_alert),
+                )
             except Exception:
-                # Fallback to messages if broadcast table missing
-                conn.execute("""
-                    INSERT INTO messages (sender_id, receiver_id, message)
-                    VALUES (?, ?, ?)
-                """, (admin_user['id'], admin_user['id'], alert_msg))
+                pass
     else:
-        # If rejected, create alert message
-        admin_user = conn.execute("SELECT id FROM users WHERE role = 'admin' AND email = 'admin@portal.co.ls'").fetchone()
-        student_user = conn.execute("SELECT name FROM users WHERE id = ?", (verification["student_id"],)).fetchone()
-        
+        # If rejected, send notification to student
         if admin_user and student_user:
-            alert_msg = f"⚠️ Results Rejected: {student_user['name']}'s results were flagged as potentially forged/fake. Reason: {notes}"
-            # Use broadcast_messages so alerts aren't pinned in the normal inbox
+            rejection_msg = f"⚠️ Your results submission was not verified. Reason: {notes}. Please resubmit with correct documents."
+            conn.execute(
+                """
+                INSERT INTO messages (sender_id, receiver_id, message, is_read)
+                VALUES (?, ?, ?, 0)
+            """,
+                (admin_user["id"], student_user["id"], rejection_msg),
+            )
+
+            # Also log admin alert
+            admin_alert = f"⚠️ Results Rejected: {student_user['name']}'s results were not verified. Reason: {notes}"
             try:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO broadcast_messages (admin_id, message, sent_to_all)
                     VALUES (?, ?, 0)
-                """, (admin_user['id'], alert_msg))
+                """,
+                    (admin_user["id"], admin_alert),
+                )
             except Exception:
-                conn.execute("""
-                    INSERT INTO messages (sender_id, receiver_id, message)
-                    VALUES (?, ?, ?)
-                """, (admin_user['id'], admin_user['id'], alert_msg))
-    
+                pass
+
     conn.commit()
     conn.close()
-    
+
     return jsonify({"success": True, "message": f"Results {status} successfully"})
+
 
 @app.route("/results_status/<int:student_id>")
 def results_status(student_id):
     """Get results verification status for a student"""
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 403
-    
+
     conn = get_db()
-    
+
     # Check if user is the student or admin
     if session.get("role") != "admin" and session["user_id"] != student_id:
         conn.close()
         return jsonify({"error": "Unauthorized"}), 403
-    
-    verification = conn.execute("""
+
+    verification = conn.execute(
+        """
         SELECT * FROM results_verifications
         WHERE student_id = ?
         ORDER BY created_at DESC
         LIMIT 1
-    """, (student_id,)).fetchone()
-    
+    """,
+        (student_id,),
+    ).fetchone()
+
     conn.close()
-    
+
     if not verification:
         return jsonify({"status": "none", "message": "No results submitted yet"})
-    
+
     # Include student anchor tx if available
     v = dict(verification)
     try:
-        if v.get('anchor_tx'):
-            v['anchor_tx'] = v['anchor_tx']
+        if v.get("anchor_tx"):
+            v["anchor_tx"] = v["anchor_tx"]
     except Exception:
         pass
     return jsonify(v)
+
 
 @app.route("/admin/send_bulk_email", methods=["POST"])
 def admin_send_bulk_email():
     if session.get("role") != "admin":
         flash("Access denied", "danger")
         return redirect(url_for("home"))
-    
+
     communication_method = request.form.get("communication_method", "email")
     recipient_group = request.form.get("recipient_group")
     subject = request.form.get("subject")
     message = request.form.get("message")
-    
+
     if not subject or not message:
         flash("Subject and message are required", "danger")
         return redirect(url_for("admin_dashboard"))
-    
+
     conn = get_db()
     if recipient_group == "all_students":
-        recipients = conn.execute("SELECT id, email, role FROM users WHERE role IN ('student', 'alumni') AND id != ?", (session['user_id'],)).fetchall()
+        recipients = conn.execute(
+            "SELECT id, email, role FROM users WHERE role IN ('student', 'alumni') AND id != ?",
+            (session["user_id"],),
+        ).fetchall()
     elif recipient_group == "all_users":
-        recipients = conn.execute("SELECT id, email, role FROM users WHERE id != ?", (session['user_id'],)).fetchall()
+        recipients = conn.execute(
+            "SELECT id, email, role FROM users WHERE id != ?", (session["user_id"],)
+        ).fetchall()
     elif recipient_group == "recruiters":
-        recipients = conn.execute("SELECT u.id, u.email, u.role FROM users u JOIN recruiters r ON u.id = r.user_id WHERE u.id != ?", (session['user_id'],)).fetchall()
+        recipients = conn.execute(
+            "SELECT u.id, u.email, u.role FROM users u JOIN recruiters r ON u.id = r.user_id WHERE u.id != ?",
+            (session["user_id"],),
+        ).fetchall()
     else:
         flash("Invalid recipient group", "danger")
         conn.close()
         return redirect(url_for("admin_dashboard"))
     conn.close()
-    
+
     sent_count = 0
     for recipient in recipients:
         try:
-            if communication_method == 'chat':
+            if communication_method == "chat":
                 conn = get_db()
-                conn.execute("INSERT INTO messages (sender_id, receiver_id, message) VALUES (?, ?, ?)",
-                             (session['user_id'], recipient['id'], message))
+                conn.execute(
+                    "INSERT INTO messages (sender_id, receiver_id, message) VALUES (?, ?, ?)",
+                    (session["user_id"], recipient["id"], message),
+                )
                 conn.commit()
                 conn.close()
                 sent_count += 1
             else:
-                send_email(recipient['email'], subject, message)
+                send_email(recipient["email"], subject, message)
                 sent_count += 1
         except Exception as e:
             print(f"Failed to send to {recipient['email']}: {e}")
-    
-    if communication_method == 'chat':
+
+    if communication_method == "chat":
         flash(f"Chat message sent to {sent_count} recipients", "success")
     else:
         flash(f"Email sent to {sent_count} recipients", "success")
     return redirect(url_for("admin_dashboard"))
+
 
 @app.route("/admin/analytics")
 def admin_analytics():
@@ -3810,23 +5718,43 @@ def admin_analytics():
     total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     total_students = conn.execute("SELECT COUNT(*) FROM students").fetchone()[0]
     total_companies = conn.execute("SELECT COUNT(*) FROM recruiters").fetchone()[0]
-    total_jobs = conn.execute("SELECT COUNT(*) FROM jobs WHERE status='approved'").fetchone()[0]
-    programs = conn.execute("SELECT COALESCE(course, 'Other') as course, COUNT(*) as count FROM students GROUP BY course ORDER BY count DESC").fetchall()
+    total_jobs = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE status='approved'"
+    ).fetchone()[0]
+    total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    total_students = conn.execute("SELECT COUNT(*) FROM students").fetchone()[0]
+    total_alumni = conn.execute(
+        "SELECT COUNT(*) FROM users WHERE role = 'alumni'"
+    ).fetchone()[0]
+    total_companies = conn.execute("SELECT COUNT(*) FROM recruiters").fetchone()[0]
+    total_jobs = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE status='approved'"
+    ).fetchone()[0]
+    programs = conn.execute(
+        "SELECT COALESCE(course, 'Other') as course, COUNT(*) as count FROM students GROUP BY course ORDER BY count DESC"
+    ).fetchall()
     program_names = [row["course"] for row in programs]
     program_counts = [row["count"] for row in programs]
-    employed = conn.execute("SELECT COUNT(*) FROM students WHERE internship_status != 'Seeking Internship'").fetchone()[0]
-    seeking = conn.execute("SELECT COUNT(*) FROM students WHERE internship_status = 'Seeking Internship'").fetchone()[0]
+    employed = conn.execute(
+        "SELECT COUNT(*) FROM students WHERE internship_status != 'Seeking Internship'"
+    ).fetchone()[0]
+    seeking = conn.execute(
+        "SELECT COUNT(*) FROM students WHERE internship_status = 'Seeking Internship'"
+    ).fetchone()[0]
     conn.close()
 
-    return render_template("analytics.html",
-                         total_users=total_users,
-                         total_students=total_students,
-                         total_companies=total_companies,
-                         total_jobs=total_jobs,
-                         programs=program_names,
-                         program_counts=program_counts,
-                         employed=employed,
-                         seeking=seeking)
+    return render_template(
+        "analytics.html",
+        total_users=total_users,
+        total_students=total_students,
+        total_companies=total_companies,
+        total_jobs=total_jobs,
+        programs=program_names,
+        program_counts=program_counts,
+        employed=employed,
+        seeking=seeking,
+    )
+
 
 # Approve Job
 @app.route("/approve_job/<int:job_id>")
@@ -3838,16 +5766,26 @@ def approve_job(job_id):
     conn = get_db()
     conn.execute("UPDATE jobs SET status='approved' WHERE id=?", (job_id,))
     conn.commit()
-    
-    job = conn.execute("SELECT recruiter_id, title FROM jobs WHERE id=?", (job_id,)).fetchone()
-    recruiter = conn.execute("SELECT u.email FROM users u JOIN recruiters r ON r.user_id = u.id WHERE r.id=?", (job['recruiter_id'],)).fetchone()
-    
+
+    job = conn.execute(
+        "SELECT recruiter_id, title FROM jobs WHERE id=?", (job_id,)
+    ).fetchone()
+    recruiter = conn.execute(
+        "SELECT u.email FROM users u JOIN recruiters r ON r.user_id = u.id WHERE r.id=?",
+        (job["recruiter_id"],),
+    ).fetchone()
+
     if recruiter:
-        send_email(recruiter['email'], f"Job Approved: {job['title']}", "Your job has been approved and is now visible.")
-    
+        send_email(
+            recruiter["email"],
+            f"Job Approved: {job['title']}",
+            "Your job has been approved and is now visible.",
+        )
+
     conn.close()
     flash("Job approved and now visible to students/alumni", "success")
     return redirect(url_for("admin_dashboard"))
+
 
 # View Job Details
 @app.route("/admin/view_job/<int:job_id>")
@@ -3857,16 +5795,20 @@ def admin_view_job(job_id):
         return redirect(url_for("home"))
 
     conn = get_db()
-    job = conn.execute("""
+    job = conn.execute(
+        """
         SELECT j.*, r.company_name, u.name as recruiter_name 
         FROM jobs j 
         JOIN recruiters r ON j.recruiter_id = r.id 
         JOIN users u ON r.user_id = u.id 
         WHERE j.id = ?
-    """, (job_id,)).fetchone()
+    """,
+        (job_id,),
+    ).fetchone()
     conn.close()
 
     return render_template("admin_view_job.html", job=job)
+
 
 # Verify Recruiter
 @app.route("/verify_recruiter/<int:user_id>")
@@ -3876,16 +5818,26 @@ def verify_recruiter(user_id):
         return redirect(url_for("home"))
 
     conn = get_db()
-    conn.execute("UPDATE recruiters SET verified=1, verification_status='admin_verified' WHERE user_id=?", (user_id,))
+    conn.execute(
+        "UPDATE recruiters SET verified=1, verification_status='admin_verified' WHERE user_id=?",
+        (user_id,),
+    )
     conn.commit()
-    
-    recruiter = conn.execute("SELECT email FROM users WHERE id=?", (user_id,)).fetchone()
+
+    recruiter = conn.execute(
+        "SELECT email FROM users WHERE id=?", (user_id,)
+    ).fetchone()
     if recruiter:
-        send_email(recruiter['email'], "Company Verified", "Your company account has been approved. You can now post jobs.")
-    
+        send_email(
+            recruiter["email"],
+            "Company Verified",
+            "Your company account has been approved. You can now post jobs.",
+        )
+
     conn.close()
     flash("Recruiter approved successfully", "success")
     return redirect(url_for("admin_dashboard"))
+
 
 # Reject Recruiter
 @app.route("/reject_recruiter/<int:user_id>", methods=["POST"])
@@ -3897,11 +5849,17 @@ def reject_recruiter(user_id):
     reason = request.form.get("reason", "No reason provided")
 
     conn = get_db()
-    recruiter_email = conn.execute("SELECT email FROM users WHERE id=?", (user_id,)).fetchone()
-    
+    recruiter_email = conn.execute(
+        "SELECT email FROM users WHERE id=?", (user_id,)
+    ).fetchone()
+
     if recruiter_email:
-        send_email(recruiter_email['email'], "Company Registration Update", f"Your company registration was not approved.\n\nReason: {reason}")
-    
+        send_email(
+            recruiter_email["email"],
+            "Company Registration Update",
+            f"Your company registration was not approved.\n\nReason: {reason}",
+        )
+
     conn.execute("DELETE FROM recruiters WHERE user_id=?", (user_id,))
     conn.execute("DELETE FROM users WHERE id=?", (user_id,))
     conn.commit()
@@ -3909,6 +5867,7 @@ def reject_recruiter(user_id):
 
     flash(f"Recruiter rejected. Reason: {reason}", "info")
     return redirect(url_for("admin_dashboard"))
+
 
 # View User Details
 @app.route("/admin/view_user/<int:user_id>")
@@ -3925,15 +5884,166 @@ def admin_view_user(user_id):
         return redirect(url_for("admin_dashboard"))
 
     if user["role"] in ["student", "alumni"]:
-        profile = conn.execute("SELECT * FROM students WHERE user_id=?", (user_id,)).fetchone()
+        profile = conn.execute(
+            "SELECT * FROM students WHERE user_id=?", (user_id,)
+        ).fetchone()
         recruiter_info = None
     else:
         profile = None
-        recruiter_info = conn.execute("SELECT * FROM recruiters WHERE user_id=?", (user_id,)).fetchone()
+        recruiter_info = conn.execute(
+            "SELECT * FROM recruiters WHERE user_id=?", (user_id,)
+        ).fetchone()
 
     conn.close()
 
-    return render_template("admin_view_user.html", user=user, profile=profile, recruiter_info=recruiter_info)
+    return render_template(
+        "admin_view_user.html",
+        user=user,
+        profile=profile,
+        recruiter_info=recruiter_info,
+    )
+
+
+# Admin delete user/profile
+@app.route("/admin/delete_profile/<int:user_id>", methods=["POST"])
+def admin_delete_profile(user_id):
+    if session.get("role") != "admin":
+        flash("Access denied - Admin only", "danger")
+        return redirect(url_for("home"))
+
+    conn = get_db()
+    user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+
+    if not user:
+        flash("User not found", "danger")
+        return redirect(url_for("admin_dashboard"))
+
+    try:
+        # Delete related data based on role
+        if user["role"] in ["student", "alumni"]:
+            # Delete student profile and related data
+            conn.execute("DELETE FROM student_courses WHERE user_id=?", (user_id,))
+            conn.execute("DELETE FROM students WHERE user_id=?", (user_id,))
+            conn.execute("DELETE FROM job_interests WHERE student_id=?", (user_id,))
+            conn.execute(
+                "DELETE FROM results_verifications WHERE student_id=?", (user_id,)
+            )
+        elif user["role"] == "recruiter":
+            # Delete recruiter and their jobs
+            recruiter = conn.execute(
+                "SELECT id FROM recruiters WHERE user_id=?", (user_id,)
+            ).fetchone()
+            if recruiter:
+                # Delete all jobs posted by this recruiter
+                conn.execute(
+                    "DELETE FROM job_recommendations WHERE job_id IN (SELECT id FROM jobs WHERE recruiter_id=?)",
+                    (recruiter["id"],),
+                )
+                conn.execute(
+                    "DELETE FROM job_interests WHERE job_id IN (SELECT id FROM jobs WHERE recruiter_id=?)",
+                    (recruiter["id"],),
+                )
+                conn.execute(
+                    "DELETE FROM jobs WHERE recruiter_id=?", (recruiter["id"],)
+                )
+                conn.execute("DELETE FROM recruiters WHERE user_id=?", (user_id,))
+
+        # Delete user
+        conn.execute(
+            "DELETE FROM messages WHERE sender_id=? OR receiver_id=?",
+            (user_id, user_id),
+        )
+        conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+        conn.commit()
+
+        flash(
+            f"User profile '{user['name']}' and all related data have been deleted successfully.",
+            "success",
+        )
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error deleting user profile: {str(e)}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for("admin_dashboard"))
+
+
+# Admin delete job posting
+@app.route("/admin/delete_job/<int:job_id>", methods=["POST"])
+def admin_delete_job(job_id):
+    if session.get("role") != "admin":
+        flash("Access denied - Admin only", "danger")
+        return redirect(url_for("home"))
+
+    conn = get_db()
+    job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+
+    if not job:
+        flash("Job not found", "danger")
+        return redirect(url_for("admin_dashboard"))
+
+    try:
+        # Delete related data
+        conn.execute("DELETE FROM job_recommendations WHERE job_id=?", (job_id,))
+        conn.execute("DELETE FROM job_interests WHERE job_id=?", (job_id,))
+        conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+        conn.commit()
+
+        flash(f"Job posting '{job['title']}' has been deleted successfully.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error deleting job: {str(e)}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for("admin_dashboard"))
+
+
+# Admin view all profiles
+@app.route("/admin/all_profiles")
+def admin_all_profiles():
+    if session.get("role") != "admin":
+        flash("Access denied - Admin only", "danger")
+        return redirect(url_for("home"))
+
+    conn = get_db()
+
+    # Get all students and alumni
+    students = conn.execute("""
+        SELECT u.id, u.name, u.email, u.phone, u.role, u.created_at, s.course, s.faculty, s.gpa, s.skills
+        FROM users u 
+        LEFT JOIN students s ON u.id = s.user_id 
+        WHERE u.role IN ('student', 'alumni')
+        ORDER BY u.created_at DESC
+    """).fetchall()
+
+    # Get all recruiters
+    recruiters = conn.execute("""
+        SELECT u.id, u.name, u.email, u.phone, u.role, u.created_at, r.company_name, r.industry, r.location, r.verified
+        FROM users u 
+        LEFT JOIN recruiters r ON u.id = r.user_id 
+        WHERE u.role = 'recruiter'
+        ORDER BY u.created_at DESC
+    """).fetchall()
+
+    # Get all admins (excluding current user)
+    admins = conn.execute("""
+        SELECT id, name, email, phone, role, created_at
+        FROM users 
+        WHERE role = 'admin'
+        ORDER BY created_at DESC
+    """).fetchall()
+
+    conn.close()
+
+    return render_template(
+        "admin_all_profiles.html",
+        students=students,
+        recruiters=recruiters,
+        admins=admins,
+    )
+
 
 # Student views job details + marks interest
 @app.route("/job/<int:job_id>")
@@ -3943,22 +6053,31 @@ def job_detail(job_id):
         return redirect(url_for("home"))
 
     conn = get_db()
-    job = conn.execute("""
+    job = conn.execute(
+        """
         SELECT j.*, r.id AS company_id, r.company_name, u.name as recruiter_name,
                r.website_description, r.logo_url, r.social_links, r.industry
         FROM jobs j 
         JOIN recruiters r ON j.recruiter_id = r.id 
         JOIN users u ON r.user_id = u.id 
         WHERE j.id = ? AND j.status = 'approved'
-    """, (job_id,)).fetchone()
+    """,
+        (job_id,),
+    ).fetchone()
 
-    interest = conn.execute("""
+    interest = conn.execute(
+        """
         SELECT 1 FROM job_interests 
         WHERE job_id=? AND student_id=?
-    """, (job_id, session["user_id"])).fetchone()
+    """,
+        (job_id, session["user_id"]),
+    ).fetchone()
 
     conn.close()
-    return render_template("job_detail.html", job=job, already_interested=bool(interest))
+    return render_template(
+        "job_detail.html", job=job, already_interested=bool(interest)
+    )
+
 
 # Mark interest (apply)
 @app.route("/job/<int:job_id>/interest", methods=["POST"])
@@ -3969,24 +6088,113 @@ def mark_interest(job_id):
 
     conn = get_db()
     try:
-        conn.execute("INSERT INTO job_interests (job_id, student_id, status) VALUES (?, ?, ?)",
-                     (job_id, session["user_id"], "pending"))
+        conn.execute(
+            "INSERT INTO job_interests (job_id, student_id, status) VALUES (?, ?, ?)",
+            (job_id, session["user_id"], "pending"),
+        )
         conn.commit()
-        
+
         # Notify recruiter
-        job = conn.execute("SELECT title, recruiter_id FROM jobs WHERE id=?", (job_id,)).fetchone()
-        recruiter = conn.execute("SELECT u.email FROM users u JOIN recruiters r ON r.user_id = u.id WHERE r.id=?", (job['recruiter_id'],)).fetchone()
-        student = conn.execute("SELECT name FROM users WHERE id=?", (session["user_id"],)).fetchone()
-        
+        job = conn.execute(
+            "SELECT title, recruiter_id FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
+        recruiter = conn.execute(
+            "SELECT u.email FROM users u JOIN recruiters r ON r.user_id = u.id WHERE r.id=?",
+            (job["recruiter_id"],),
+        ).fetchone()
+        student = conn.execute(
+            "SELECT name FROM users WHERE id=?", (session["user_id"],)
+        ).fetchone()
+
         if recruiter:
-            send_email(recruiter['email'], f"New Applicant: {job['title']}",
-                       f"{student['name']} has applied for {job['title']}. Login to view.")
-        
+            send_email(
+                recruiter["email"],
+                f"New Applicant: {job['title']}",
+                f"{student['name']} has applied for {job['title']}. Login to view.",
+            )
+
         flash("Application submitted successfully!", "success")
     except sqlite3.IntegrityError:
         flash("You have already applied for this job.", "warning")
     conn.close()
     return redirect(url_for("job_detail", job_id=job_id))
+
+
+# View Scraped Job Details
+@app.route("/scraped_job/<int:scraped_job_id>")
+def scraped_job_detail(scraped_job_id):
+    if session.get("role") not in ["student", "alumni"]:
+        flash("Only students and alumni can view job details", "danger")
+        return redirect(url_for("home"))
+
+    conn = get_db()
+    scraped_job = conn.execute(
+        """
+        SELECT * FROM scraped_jobs WHERE id = ?
+    """,
+        (scraped_job_id,),
+    ).fetchone()
+
+    if not scraped_job:
+        flash("Job not found", "danger")
+        return redirect(url_for("dashboard"))
+
+    # Check if student already interested
+    already_interested = conn.execute(
+        """
+        SELECT 1 FROM scraped_job_interests 
+        WHERE scraped_job_id = ? AND student_id = ?
+    """,
+        (scraped_job_id, session["user_id"]),
+    ).fetchone()
+
+    conn.close()
+
+    return render_template(
+        "scraped_job_detail.html",
+        job=scraped_job,
+        already_interested=bool(already_interested),
+    )
+
+
+# Apply to Scraped Job (records interest + redirects to external link)
+@app.route("/scraped_job/<int:scraped_job_id>/apply", methods=["POST"])
+def apply_scraped_job(scraped_job_id):
+    if session.get("role") not in ["student", "alumni"]:
+        flash("Access denied", "danger")
+        return redirect(url_for("home"))
+
+    conn = get_db()
+    try:
+        # Record interest in scraped job
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO scraped_job_interests 
+            (scraped_job_id, student_id, created_at)
+            VALUES (?, ?, ?)
+        """,
+            (scraped_job_id, session["user_id"], datetime.now()),
+        )
+        conn.commit()
+
+        flash(
+            "Interest recorded! You will now be redirected to the job posting.", "info"
+        )
+    except Exception as e:
+        print(f"Error recording scraped job interest: {e}")
+
+    # Get the job to redirect to source
+    job = conn.execute(
+        "SELECT source_url FROM scraped_jobs WHERE id = ?", (scraped_job_id,)
+    ).fetchone()
+    conn.close()
+
+    if job and job["source_url"]:
+        return redirect(job["source_url"])
+    else:
+        flash("Job link is no longer available", "warning")
+        return redirect(url_for("dashboard"))
+
 
 # Jobs Listing
 @app.route("/jobs")
@@ -4001,6 +6209,7 @@ def jobs_list():
     """).fetchall()
     conn.close()
     return render_template("jobs.html", jobs=jobs)
+
 
 # Post Mentorship (for Alumni only)
 @app.route("/post_mentorship", methods=["GET", "POST"])
@@ -4021,10 +6230,13 @@ def post_mentorship():
 
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO mentorships (alumni_id, title, description, duration, skills_needed)
             VALUES (?, ?, ?, ?, ?)
-        """, (session["user_id"], title, description, duration, skills_needed))
+        """,
+            (session["user_id"], title, description, duration, skills_needed),
+        )
         conn.commit()
         conn.close()
 
@@ -4033,22 +6245,30 @@ def post_mentorship():
 
     return render_template("post_mentorship.html")
 
+
 # Forgot Password
 @app.route("/forgot_password", methods=["GET", "POST"])
 def forgot_password():
     if request.method == "POST":
         email = request.form.get("email")
         conn = get_db()
-        user = conn.execute("SELECT id, name FROM users WHERE email = ?", (email,)).fetchone()
+        user = conn.execute(
+            "SELECT id, name FROM users WHERE email = ?", (email,)
+        ).fetchone()
         if user:
             token = secrets.token_urlsafe(32)
             expiry = datetime.now() + timedelta(hours=1)
-            conn.execute("UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?",
-                         (token, expiry, user["id"]))
+            conn.execute(
+                "UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?",
+                (token, expiry, user["id"]),
+            )
             conn.commit()
             reset_link = url_for("reset_password", token=token, _external=True)
-            send_email(email, "Password Reset Request",
-                       f"Hello {user['name']},\n\nClick the link to reset your password: {reset_link}\n\nThis link expires in 1 hour.")
+            send_email(
+                email,
+                "Password Reset Request",
+                f"Hello {user['name']},\n\nClick the link to reset your password: {reset_link}\n\nThis link expires in 1 hour.",
+            )
             flash("Password reset link sent to your email.", "success")
         else:
             flash("Email not found.", "danger")
@@ -4056,13 +6276,17 @@ def forgot_password():
         return redirect(url_for("login"))
     return render_template("forgot_password.html")
 
+
 @app.route("/reset_password/<token>", methods=["GET", "POST"])
 def reset_password(token):
     conn = get_db()
-    user = conn.execute("""
+    user = conn.execute(
+        """
         SELECT id, name FROM users 
         WHERE reset_token = ? AND reset_token_expiry > ?
-    """, (token, datetime.now())).fetchone()
+    """,
+        (token, datetime.now()),
+    ).fetchone()
     if not user:
         flash("Invalid or expired reset link.", "danger")
         conn.close()
@@ -4076,14 +6300,17 @@ def reset_password(token):
             flash("Passwords do not match.", "danger")
         else:
             hashed = generate_password_hash(password)
-            conn.execute("UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expiry = NULL WHERE id = ?",
-                         (hashed, user["id"]))
+            conn.execute(
+                "UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expiry = NULL WHERE id = ?",
+                (hashed, user["id"]),
+            )
             conn.commit()
             flash("Password reset successful. Please login.", "success")
             conn.close()
             return redirect(url_for("login"))
     conn.close()
     return render_template("reset_password.html", token=token)
+
 
 # Chat Routes
 @app.route("/chat")
@@ -4093,6 +6320,7 @@ def chat():
         return redirect(url_for("login"))
     return render_template("chat.html")
 
+
 @app.route("/chatbot")
 def chatbot():
     if not session.get("user_id"):
@@ -4100,19 +6328,24 @@ def chatbot():
         return redirect(url_for("login"))
     return render_template("chatbot.html")
 
+
 @app.route("/chatbot/conversations")
 def chatbot_conversations():
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
     conn = get_db()
-    conversations = conn.execute("""
+    conversations = conn.execute(
+        """
         SELECT id, user_message, bot_response, escalated_to_admin, created_at
         FROM chatbot_conversations
         WHERE user_id = ?
         ORDER BY created_at ASC
-    """, (session["user_id"],)).fetchall()
+    """,
+        (session["user_id"],),
+    ).fetchall()
     conn.close()
     return jsonify([dict(c) for c in conversations])
+
 
 @app.route("/chatbot/send_message", methods=["POST"])
 def chatbot_send_message():
@@ -4124,97 +6357,238 @@ def chatbot_send_message():
         return jsonify({"error": "Message text is required"}), 400
 
     result = get_ai_response(
-        message,
-        user_id=session["user_id"],
-        session_id=f"portal_{session['user_id']}"
+        message, user_id=session["user_id"], session_id=f"portal_{session['user_id']}"
     )
     bot_reply = result["response"]
     escalated = int(bool(result["escalated"]))
 
     conn = get_db()
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO chatbot_conversations (
             user_id, user_message, bot_response, escalated_to_admin, intent, confidence, session_id, metadata, toxicity_flag
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        session["user_id"],
-        message,
-        bot_reply,
-        escalated,
-        result["intent"],
-        result["confidence"],
-        f"portal_{session['user_id']}",
-        json.dumps({
-            "clarification": result["clarification"],
-            "toxicity_flag": result["toxicity_flag"],
-            "context": result["context"]
-        }),
-        int(bool(result["toxicity_flag"]))
-    ))
+    """,
+        (
+            session["user_id"],
+            message,
+            bot_reply,
+            escalated,
+            result["intent"],
+            result["confidence"],
+            f"portal_{session['user_id']}",
+            json.dumps(
+                {
+                    "clarification": result["clarification"],
+                    "toxicity_flag": result["toxicity_flag"],
+                    "context": result["context"],
+                }
+            ),
+            int(bool(result["toxicity_flag"])),
+        ),
+    )
     if escalated:
         admin_id = get_primary_admin_id()
         if admin_id:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO moderation_flags (message, sender_id, receiver_id, reason)
                 VALUES (?, ?, ?, ?)
-            """, (message, session["user_id"], admin_id, 'chatbot escalated to admin'))
+            """,
+                (message, session["user_id"], admin_id, "chatbot escalated to admin"),
+            )
     conn.commit()
     conn.close()
 
-    socketio.emit('new_message', {
-        'sender_id': session['user_id'],
-        'receiver_id': session['user_id'],
-        'message': bot_reply,
-        'created_at': datetime.now().isoformat()
-    }, room=str(session['user_id']))
+    socketio.emit(
+        "new_message",
+        {
+            "sender_id": session["user_id"],
+            "receiver_id": session["user_id"],
+            "message": bot_reply,
+            "created_at": datetime.now().isoformat(),
+        },
+        room=str(session["user_id"]),
+    )
 
-    return jsonify({
-        "success": True,
-        "bot_response": bot_reply,
-        "escalated": escalated,
-        "intent": result["intent"],
-        "confidence": result["confidence"],
-        "toxicity_flag": bool(result["toxicity_flag"])
-    })
+    return jsonify(
+        {
+            "success": True,
+            "bot_response": bot_reply,
+            "escalated": escalated,
+            "intent": result["intent"],
+            "confidence": result["confidence"],
+            "toxicity_flag": bool(result["toxicity_flag"]),
+        }
+    )
+
 
 @app.route("/chat/users")
 def chat_users():
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     conn = get_db()
     current_user_role = session.get("role")
     current_user_id = session["user_id"]
-    
+
     # Get users based on permissions
     if current_user_role == "admin":
         # ADMIN CAN SEE EVERYONE AND CHAT WITHOUT REQUESTS
-        users = conn.execute("""
+        users = conn.execute(
+            """
             SELECT id, name, role, email
             FROM users
             WHERE id != ?
             ORDER BY name
-        """, (current_user_id,)).fetchall()
-        
+        """,
+            (current_user_id,),
+        ).fetchall()
+
         result = []
         for u in users:
             # Admin has conversation with everyone automatically
-            last_msg = conn.execute("""
+            last_msg = conn.execute(
+                """
                 SELECT message, created_at, sender_id
                 FROM messages
                 WHERE (sender_id = ? AND receiver_id = ?)
                    OR (sender_id = ? AND receiver_id = ?)
                 ORDER BY created_at DESC
                 LIMIT 1
-            """, (current_user_id, u["id"], u["id"], current_user_id)).fetchone()
-            
-            unread = conn.execute("""
+            """,
+                (current_user_id, u["id"], u["id"], current_user_id),
+            ).fetchone()
+
+            unread = conn.execute(
+                """
                 SELECT COUNT(*) FROM messages
                 WHERE receiver_id = ? AND sender_id = ? AND read_status = 0
-            """, (current_user_id, u["id"])).fetchone()[0]
-            
-            result.append({
+            """,
+                (current_user_id, u["id"]),
+            ).fetchone()[0]
+
+            result.append(
+                {
+                    "id": u["id"],
+                    "name": u["name"],
+                    "role": u["role"],
+                    "email": u["email"],
+                    "last_message": last_msg["message"] if last_msg else None,
+                    "last_time": last_msg["created_at"] if last_msg else None,
+                    "unread": unread,
+                    "last_sender": last_msg["sender_id"] if last_msg else None,
+                    "has_conversation": True,
+                    "message_request_status": None,
+                }
+            )
+
+        conn.close()
+        return jsonify(result)
+
+    elif current_user_role == "recruiter":
+        # RECRUITERS can only see students/alumni
+        users = conn.execute(
+            """
+            SELECT id, name, role, email
+            FROM users
+            WHERE id != ? AND role IN ('student', 'alumni')
+            ORDER BY name
+        """,
+            (current_user_id,),
+        ).fetchall()
+    else:
+        # STUDENTS/ALUMNI can only see other students/alumni
+        users = conn.execute(
+            """
+            SELECT id, name, role, email
+            FROM users
+            WHERE id != ? AND role IN ('student', 'alumni')
+            ORDER BY name
+        """,
+            (current_user_id,),
+        ).fetchall()
+
+    # Regular users only see student/alumni contacts; the System Admin is not listed in the user chat list.
+
+    # For non-admin users, process with message requests
+    result = []
+    for u in users:
+        # Check if there's an existing conversation
+        existing_conversation = (
+            conn.execute(
+                """
+            SELECT COUNT(*) FROM messages
+            WHERE (sender_id = ? AND receiver_id = ?)
+               OR (sender_id = ? AND receiver_id = ?)
+        """,
+                (current_user_id, u["id"], u["id"], current_user_id),
+            ).fetchone()[0]
+            > 0
+        )
+
+        message_request = conn.execute(
+            """
+            SELECT id, sender_id, receiver_id, message, status
+            FROM message_requests
+            WHERE (sender_id = ? AND receiver_id = ?)
+               OR (sender_id = ? AND receiver_id = ?)
+            ORDER BY created_at DESC LIMIT 1
+        """,
+            (current_user_id, u["id"], u["id"], current_user_id),
+        ).fetchone()
+        request_status = message_request["status"] if message_request else None
+        request_direction = None
+        request_message = None
+        request_id = None
+        if message_request:
+            request_direction = (
+                "outgoing"
+                if message_request["sender_id"] == current_user_id
+                else "incoming"
+            )
+            request_message = message_request["message"]
+            request_id = message_request["id"]
+
+        accepted_request = request_status == "accepted"
+        has_conversation = (
+            existing_conversation
+            or accepted_request
+            or current_user_role == "recruiter"
+        )
+        if current_user_role == "recruiter":
+            request_status = None
+            request_direction = None
+            request_message = None
+            request_id = None
+
+        last_msg = None
+        unread = 0
+
+        if has_conversation:
+            last_msg = conn.execute(
+                """
+                SELECT message, created_at, sender_id
+                FROM messages
+                WHERE (sender_id = ? AND receiver_id = ?)
+                   OR (sender_id = ? AND receiver_id = ?)
+                ORDER BY created_at DESC
+                LIMIT 1
+            """,
+                (current_user_id, u["id"], u["id"], current_user_id),
+            ).fetchone()
+
+            unread = conn.execute(
+                """
+                SELECT COUNT(*) FROM messages
+                WHERE receiver_id = ? AND sender_id = ? AND read_status = 0
+            """,
+                (current_user_id, u["id"]),
+            ).fetchone()[0]
+
+        result.append(
+            {
                 "id": u["id"],
                 "name": u["name"],
                 "role": u["role"],
@@ -4223,328 +6597,329 @@ def chat_users():
                 "last_time": last_msg["created_at"] if last_msg else None,
                 "unread": unread,
                 "last_sender": last_msg["sender_id"] if last_msg else None,
-                "has_conversation": True,
-                "message_request_status": None
-            })
-        
-        conn.close()
-        return jsonify(result)
-    
-    elif current_user_role == "recruiter":
-        # RECRUITERS can only see students/alumni
-        users = conn.execute("""
-            SELECT id, name, role, email
-            FROM users
-            WHERE id != ? AND role IN ('student', 'alumni')
-            ORDER BY name
-        """, (current_user_id,)).fetchall()
-    else:
-        # STUDENTS/ALUMNI can only see other students/alumni
-        users = conn.execute("""
-            SELECT id, name, role, email
-            FROM users
-            WHERE id != ? AND role IN ('student', 'alumni')
-            ORDER BY name
-        """, (current_user_id,)).fetchall()
+                "has_conversation": has_conversation,
+                "message_request_status": request_status,
+                "message_request_direction": request_direction,
+                "message_request_text": request_message,
+                "message_request_id": request_id,
+            }
+        )
 
-    # Regular users only see student/alumni contacts; the System Admin is not listed in the user chat list.
-    
-    # For non-admin users, process with message requests
-    result = []
-    for u in users:
-        # Check if there's an existing conversation
-        existing_conversation = conn.execute("""
-            SELECT COUNT(*) FROM messages
-            WHERE (sender_id = ? AND receiver_id = ?)
-               OR (sender_id = ? AND receiver_id = ?)
-        """, (current_user_id, u["id"], u["id"], current_user_id)).fetchone()[0] > 0
-        
-        message_request = conn.execute("""
-            SELECT id, sender_id, receiver_id, message, status
-            FROM message_requests
-            WHERE (sender_id = ? AND receiver_id = ?)
-               OR (sender_id = ? AND receiver_id = ?)
-            ORDER BY created_at DESC LIMIT 1
-        """, (current_user_id, u["id"], u["id"], current_user_id)).fetchone()
-        request_status = message_request["status"] if message_request else None
-        request_direction = None
-        request_message = None
-        request_id = None
-        if message_request:
-            request_direction = 'outgoing' if message_request["sender_id"] == current_user_id else 'incoming'
-            request_message = message_request["message"]
-            request_id = message_request["id"]
-
-        accepted_request = request_status == 'accepted'
-        has_conversation = existing_conversation or accepted_request
-        
-        last_msg = None
-        unread = 0
-        
-        if has_conversation:
-            last_msg = conn.execute("""
-                SELECT message, created_at, sender_id
-                FROM messages
-                WHERE (sender_id = ? AND receiver_id = ?)
-                   OR (sender_id = ? AND receiver_id = ?)
-                ORDER BY created_at DESC
-                LIMIT 1
-            """, (current_user_id, u["id"], u["id"], current_user_id)).fetchone()
-            
-            unread = conn.execute("""
-                SELECT COUNT(*) FROM messages
-                WHERE receiver_id = ? AND sender_id = ? AND read_status = 0
-            """, (current_user_id, u["id"])).fetchone()[0]
-        
-        result.append({
-            "id": u["id"],
-            "name": u["name"],
-            "role": u["role"],
-            "email": u["email"],
-            "last_message": last_msg["message"] if last_msg else None,
-            "last_time": last_msg["created_at"] if last_msg else None,
-            "unread": unread,
-            "last_sender": last_msg["sender_id"] if last_msg else None,
-            "has_conversation": has_conversation,
-            "message_request_status": request_status,
-            "message_request_direction": request_direction,
-            "message_request_text": request_message
-            ,"message_request_id": request_id
-        })
-    
     conn.close()
     return jsonify(result)
+
+
 @app.route("/chat/messages/<int:other_user_id>")
 def chat_messages(other_user_id):
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     try:
         # Keep session alive for 4 hours
         get_or_create_session(session["user_id"])
         update_user_session(session["user_id"])
-        
+
         conn = get_db()
         admin_id = get_primary_admin_id()
-        messages = conn.execute("""
+        messages = conn.execute(
+            """
             SELECT id, sender_id, receiver_id, message, read_status, created_at
             FROM messages
             WHERE (sender_id = ? AND receiver_id = ?)
                OR (sender_id = ? AND receiver_id = ?)
             ORDER BY created_at ASC
-        """, (session["user_id"], other_user_id, other_user_id, session["user_id"])).fetchall()
-        
+        """,
+            (session["user_id"], other_user_id, other_user_id, session["user_id"]),
+        ).fetchall()
+
         all_messages = [dict(msg) for msg in messages]
-        if other_user_id == admin_id and session.get('role') != 'admin':
-            bot_conversations = conn.execute("""
+        if other_user_id == admin_id and session.get("role") != "admin":
+            bot_conversations = conn.execute(
+                """
                 SELECT id, user_message, bot_response, escalated_to_admin, created_at
                 FROM chatbot_conversations
                 WHERE user_id = ?
                 ORDER BY created_at ASC
-            """, (session['user_id'],)).fetchall()
+            """,
+                (session["user_id"],),
+            ).fetchall()
             for conv in bot_conversations:
-                all_messages.append({
-                    'id': f"bot-{conv['id']}-user",
-                    'sender_id': session['user_id'],
-                    'receiver_id': admin_id,
-                    'message': conv['user_message'],
-                    'read_status': 1,
-                    'created_at': conv['created_at']
-                })
-                all_messages.append({
-                    'id': f"bot-{conv['id']}-bot",
-                    'sender_id': admin_id,
-                    'receiver_id': session['user_id'],
-                    'message': conv['bot_response'],
-                    'read_status': 1,
-                    'created_at': conv['created_at']
-                })
-            all_messages.sort(key=lambda x: x['created_at'])
-        
-        conn.execute("""
+                all_messages.append(
+                    {
+                        "id": f"bot-{conv['id']}-user",
+                        "sender_id": session["user_id"],
+                        "receiver_id": admin_id,
+                        "message": conv["user_message"],
+                        "read_status": 1,
+                        "created_at": conv["created_at"],
+                    }
+                )
+                all_messages.append(
+                    {
+                        "id": f"bot-{conv['id']}-bot",
+                        "sender_id": admin_id,
+                        "receiver_id": session["user_id"],
+                        "message": conv["bot_response"],
+                        "read_status": 1,
+                        "created_at": conv["created_at"],
+                    }
+                )
+            all_messages.sort(key=lambda x: x["created_at"])
+
+        conn.execute(
+            """
             UPDATE messages
             SET read_status = 1, read_at = CURRENT_TIMESTAMP
             WHERE receiver_id = ? AND sender_id = ? AND read_status = 0
-        """, (session["user_id"], other_user_id))
+        """,
+            (session["user_id"], other_user_id),
+        )
         conn.commit()
         conn.close()
-        
+
         return jsonify(all_messages)
     except Exception as e:
         print(f"Chat messages error: {e}")
         return jsonify({"error": f"Failed to load messages: {str(e)}"}), 500
 
+
 @app.route("/chat/send_message_request", methods=["POST"])
 def send_message_request():
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     data = request.get_json()
     receiver_id = data.get("receiver_id")
     message = data.get("message", "").strip()
-    
+
     if not receiver_id or not message:
         return jsonify({"error": "Missing data"}), 400
-    
+
     current_user_role = session.get("role")
-    
+
     # Check permissions
     conn = get_db()
-    receiver = conn.execute("SELECT role FROM users WHERE id = ?", (receiver_id,)).fetchone()
-    
+    receiver = conn.execute(
+        "SELECT role FROM users WHERE id = ?", (receiver_id,)
+    ).fetchone()
+
     if not receiver:
         conn.close()
         return jsonify({"error": "User not found"}), 404
-    
+
     # Students can only send requests to other students
-    if current_user_role in ["student", "alumni"] and receiver["role"] not in ["student", "alumni"]:
+    if current_user_role in ["student", "alumni"] and receiver["role"] not in [
+        "student",
+        "alumni",
+    ]:
         conn.close()
         return jsonify({"error": "Students can only message other students"}), 403
-    
+
+    # Recruiters can message students/alumni directly, so they should not create request records
+    if current_user_role == "recruiter" and receiver["role"] in ["student", "alumni"]:
+        conn.close()
+        return jsonify(
+            {"error": "Recruiters can message students directly without requests"}
+        ), 400
+
     # Check if conversation already exists
-    existing_conversation = conn.execute("""
+    existing_conversation = (
+        conn.execute(
+            """
         SELECT COUNT(*) FROM messages
         WHERE (sender_id = ? AND receiver_id = ?)
            OR (sender_id = ? AND receiver_id = ?)
-    """, (session["user_id"], receiver_id, receiver_id, session["user_id"])).fetchone()[0] > 0
-    
+    """,
+            (session["user_id"], receiver_id, receiver_id, session["user_id"]),
+        ).fetchone()[0]
+        > 0
+    )
+
     if existing_conversation:
         conn.close()
         return jsonify({"error": "Conversation already exists"}), 400
-    
+
     # Check for existing pending request
-    existing_request = conn.execute("""
+    existing_request = conn.execute(
+        """
         SELECT id FROM message_requests
         WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
         AND status = 'pending'
-    """, (session["user_id"], receiver_id, receiver_id, session["user_id"])).fetchone()
-    
+    """,
+        (session["user_id"], receiver_id, receiver_id, session["user_id"]),
+    ).fetchone()
+
     if existing_request:
         conn.close()
         return jsonify({"error": "Message request already sent"}), 400
-    
+
     # Admins don't need to create a message request; create direct message
-    if current_user_role == 'admin':
+    if current_user_role == "admin":
         try:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO messages (sender_id, receiver_id, message, read_status, created_at)
                 VALUES (?, ?, ?, 0, ?)
-            """, (session["user_id"], receiver_id, message, datetime.now()))
+            """,
+                (session["user_id"], receiver_id, message, datetime.now()),
+            )
             conn.commit()
             # Emit socket notification to receiver
             try:
-                socketio.emit('new_message', {
-                    'sender_id': session['user_id'],
-                    'receiver_id': receiver_id,
-                    'message': message,
-                    'created_at': datetime.now().isoformat()
-                }, room=str(receiver_id))
+                socketio.emit(
+                    "new_message",
+                    {
+                        "sender_id": session["user_id"],
+                        "receiver_id": receiver_id,
+                        "message": message,
+                        "created_at": datetime.now().isoformat(),
+                    },
+                    room=str(receiver_id),
+                )
             except Exception:
                 pass
             conn.close()
-            return jsonify({"success": True, "message": "Message sent directly (admin)"})
+            return jsonify(
+                {"success": True, "message": "Message sent directly (admin)"}
+            )
         except Exception as e:
             conn.close()
             return jsonify({"error": str(e)}), 500
 
     # Create message request for non-admin users
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO message_requests (sender_id, receiver_id, message)
         VALUES (?, ?, ?)
-    """, (session["user_id"], receiver_id, message))
+    """,
+        (session["user_id"], receiver_id, message),
+    )
     conn.commit()
     conn.close()
-    
+
     return jsonify({"success": True})
+
 
 @app.route("/chat/handle_message_request", methods=["POST"])
 def handle_message_request():
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     data = request.get_json()
     request_id = data.get("request_id")
     action = data.get("action")  # 'accept' or 'reject'
-    
+
     if not request_id or action not in ["accept", "reject"]:
         return jsonify({"error": "Invalid data"}), 400
-    
+
     conn = get_db()
-    
+
     # Get the request
-    msg_request = conn.execute("""
+    msg_request = conn.execute(
+        """
         SELECT * FROM message_requests WHERE id = ?
-    """, (request_id,)).fetchone()
-    
+    """,
+        (request_id,),
+    ).fetchone()
+
     if not msg_request:
         conn.close()
         return jsonify({"error": "Request not found"}), 404
-    
+
     # Check if user is the receiver
     if msg_request["receiver_id"] != session["user_id"]:
         conn.close()
         return jsonify({"error": "Unauthorized"}), 403
-    
+
     if action == "accept":
         # Create initial message from the request
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO messages (sender_id, receiver_id, message)
             VALUES (?, ?, ?)
-        """, (msg_request["sender_id"], msg_request["receiver_id"], msg_request["message"]))
+        """,
+            (
+                msg_request["sender_id"],
+                msg_request["receiver_id"],
+                msg_request["message"],
+            ),
+        )
 
         # Update request status
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE message_requests SET status = 'accepted', responded_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (request_id,))
+        """,
+            (request_id,),
+        )
 
     else:  # reject
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE message_requests SET status = 'rejected', responded_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (request_id,))
+        """,
+            (request_id,),
+        )
         # Insert automatic reply to sender informing them of rejection
         try:
             decline_text = "Your message request was declined"
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO messages (sender_id, receiver_id, message, created_at)
                 VALUES (?, ?, ?, ?)
-            """, (msg_request["receiver_id"], msg_request["sender_id"], decline_text, datetime.now()))
+            """,
+                (
+                    msg_request["receiver_id"],
+                    msg_request["sender_id"],
+                    decline_text,
+                    datetime.now(),
+                ),
+            )
             # Emit socket notification to original sender
             try:
-                socketio.emit('new_message', {
-                    'sender_id': msg_request['receiver_id'],
-                    'receiver_id': msg_request['sender_id'],
-                    'message': decline_text,
-                    'created_at': datetime.now().isoformat()
-                }, room=str(msg_request['sender_id']))
+                socketio.emit(
+                    "new_message",
+                    {
+                        "sender_id": msg_request["receiver_id"],
+                        "receiver_id": msg_request["sender_id"],
+                        "message": decline_text,
+                        "created_at": datetime.now().isoformat(),
+                    },
+                    room=str(msg_request["sender_id"]),
+                )
             except Exception:
                 pass
         except Exception:
             pass
-    
+
     conn.commit()
     conn.close()
-    
+
     return jsonify({"success": True})
+
+
 @app.route("/chat/send_message", methods=["POST"])
 def send_message_endpoint():
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     data = request.get_json()
     receiver_id = data.get("receiver_id")
     message = data.get("message", "").strip()
-    
+
     if not receiver_id or not message:
         return jsonify({"error": "Missing data"}), 400
-    
+
     current_user_role = session.get("role")
     current_user_id = session["user_id"]
-    
+
     conn = get_db()
-    receiver = conn.execute("SELECT role FROM users WHERE id = ?", (receiver_id,)).fetchone()
-    
+    receiver = conn.execute(
+        "SELECT role FROM users WHERE id = ?", (receiver_id,)
+    ).fetchone()
+
     if not receiver:
         conn.close()
         return jsonify({"error": "User not found"}), 404
@@ -4553,68 +6928,121 @@ def send_message_endpoint():
         bot_reply = generate_chatbot_response(message)
         escalated = 1 if bot_reply == "I'll connect you with admin." else 0
 
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO chatbot_conversations (user_id, user_message, bot_response, escalated_to_admin)
             VALUES (?, ?, ?, ?)
-        """, (current_user_id, message, bot_reply, escalated))
+        """,
+            (current_user_id, message, bot_reply, escalated),
+        )
 
         if escalated:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO moderation_flags (message, sender_id, receiver_id, reason)
                 VALUES (?, ?, ?, ?)
-            """, (message, current_user_id, receiver_id, 'chatbot escalated to admin'))
+            """,
+                (message, current_user_id, receiver_id, "chatbot escalated to admin"),
+            )
 
         conn.commit()
         conn.close()
 
-        socketio.emit('new_message', {
-            'sender_id': receiver_id,
-            'receiver_id': current_user_id,
-            'message': bot_reply,
-            'created_at': datetime.now().isoformat()
-        }, room=str(current_user_id))
+        socketio.emit(
+            "new_message",
+            {
+                "sender_id": receiver_id,
+                "receiver_id": current_user_id,
+                "message": bot_reply,
+                "created_at": datetime.now().isoformat(),
+            },
+            room=str(current_user_id),
+        )
 
         return jsonify({"success": True, "bot_response": bot_reply})
 
     # ADMIN CAN MESSAGE ANYONE - NO RESTRICTIONS
     if current_user_role == "admin":
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO messages (sender_id, receiver_id, message, read_status, created_at)
             VALUES (?, ?, ?, 0, ?)
-        """, (current_user_id, receiver_id, message, datetime.now()))
+        """,
+            (current_user_id, receiver_id, message, datetime.now()),
+        )
         conn.commit()
         conn.close()
-        
-        socketio.emit('new_message', {
-            'sender_id': current_user_id,
-            'receiver_id': receiver_id,
-            'message': message,
-            'created_at': datetime.now().isoformat()
-        }, room=str(receiver_id))
-        
+
+        socketio.emit(
+            "new_message",
+            {
+                "sender_id": current_user_id,
+                "receiver_id": receiver_id,
+                "message": message,
+                "created_at": datetime.now().isoformat(),
+            },
+            room=str(receiver_id),
+        )
+
         return jsonify({"success": True})
-    
+
+    if current_user_role == "recruiter" and receiver["role"] in ["student", "alumni"]:
+        conn.execute(
+            """
+            INSERT INTO messages (sender_id, receiver_id, message, read_status, created_at)
+            VALUES (?, ?, ?, 0, ?)
+        """,
+            (current_user_id, receiver_id, message, datetime.now()),
+        )
+        conn.commit()
+        conn.close()
+
+        socketio.emit(
+            "new_message",
+            {
+                "sender_id": current_user_id,
+                "receiver_id": receiver_id,
+                "message": message,
+                "created_at": datetime.now().isoformat(),
+            },
+            room=str(receiver_id),
+        )
+
+        return jsonify({"success": True})
+
     if current_user_role != "admin":
-        existing_conversation = conn.execute("""
+        existing_conversation = (
+            conn.execute(
+                """
             SELECT COUNT(*) FROM messages
             WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
-        """, (current_user_id, receiver_id, receiver_id, current_user_id)).fetchone()[0] > 0
+        """,
+                (current_user_id, receiver_id, receiver_id, current_user_id),
+            ).fetchone()[0]
+            > 0
+        )
 
-        accepted_request = conn.execute("""
+        accepted_request = conn.execute(
+            """
             SELECT id FROM message_requests
             WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
             AND status = 'accepted'
             ORDER BY created_at DESC
             LIMIT 1
-        """, (current_user_id, receiver_id, receiver_id, current_user_id)).fetchone()
+        """,
+            (current_user_id, receiver_id, receiver_id, current_user_id),
+        ).fetchone()
 
-        rejected_request = conn.execute("""
+        rejected_request = conn.execute(
+            """
             SELECT id FROM message_requests
             WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
             AND status = 'rejected'
             ORDER BY created_at DESC
             LIMIT 1
-        """, (current_user_id, receiver_id, receiver_id, current_user_id)).fetchone()
+        """,
+            (current_user_id, receiver_id, receiver_id, current_user_id),
+        ).fetchone()
 
         if rejected_request and not accepted_request:
             conn.close()
@@ -4623,63 +7051,90 @@ def send_message_endpoint():
         if not existing_conversation and not accepted_request:
             conn.close()
             return jsonify({"error": "Message request required"}), 403
-    
+
     # Save message
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO messages (sender_id, receiver_id, message, read_status, created_at)
         VALUES (?, ?, ?, 0, ?)
-    """, (current_user_id, receiver_id, message, datetime.now()))
+    """,
+        (current_user_id, receiver_id, message, datetime.now()),
+    )
     conn.commit()
     conn.close()
-    
-    socketio.emit('new_message', {
-        'sender_id': current_user_id,
-        'receiver_id': receiver_id,
-        'message': message,
-        'created_at': datetime.now().isoformat()
-    }, room=str(receiver_id))
+
+    socketio.emit(
+        "new_message",
+        {
+            "sender_id": current_user_id,
+            "receiver_id": receiver_id,
+            "message": message,
+            "created_at": datetime.now().isoformat(),
+        },
+        room=str(receiver_id),
+    )
     return jsonify({"success": True})
+
+
 @app.route("/admin/share_scraped_job", methods=["POST"])
 def share_scraped_job():
     if session.get("role") != "admin":
         return jsonify({"error": "Unauthorized"}), 403
-    
+
     data = request.get_json()
     job_id = data.get("job_id")
-    
+
     conn = get_db()
-    
+
     # Get scraped job
-    scraped_job = conn.execute("SELECT * FROM scraped_jobs WHERE id = ?", (job_id,)).fetchone()
-    
+    scraped_job = conn.execute(
+        "SELECT * FROM scraped_jobs WHERE id = ?", (job_id,)
+    ).fetchone()
+
     if not scraped_job:
         conn.close()
         return jsonify({"error": "Job not found"}), 404
-    
+
     # Create a real job posting from scraped data
     # Get admin's recruiter_id or create a system recruiter
-    system_recruiter = conn.execute("SELECT id FROM recruiters WHERE user_id = ?", (session["user_id"],)).fetchone()
-    
+    system_recruiter = conn.execute(
+        "SELECT id FROM recruiters WHERE user_id = ?", (session["user_id"],)
+    ).fetchone()
+
     if not system_recruiter:
         # Create a system recruiter for admin
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO recruiters (user_id, company_name, verified)
             VALUES (?, 'System Admin', 1)
-        """, (session["user_id"],))
+        """,
+            (session["user_id"],),
+        )
         conn.commit()
-        system_recruiter = conn.execute("SELECT id FROM recruiters WHERE user_id = ?", (session["user_id"],)).fetchone()
-    
+        system_recruiter = conn.execute(
+            "SELECT id FROM recruiters WHERE user_id = ?", (session["user_id"],)
+        ).fetchone()
+
     # Insert as job posting
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO jobs (recruiter_id, title, description, location, salary, status)
         VALUES (?, ?, ?, ?, ?, 'approved')
-    """, (system_recruiter["id"], scraped_job['title'], scraped_job['description'], 
-          scraped_job['location'] or 'Remote', scraped_job['salary'] or 'Negotiable'))
-    
+    """,
+        (
+            system_recruiter["id"],
+            scraped_job["title"],
+            scraped_job["description"],
+            scraped_job["location"] or "Remote",
+            scraped_job["salary"] or "Negotiable",
+        ),
+    )
+
     conn.commit()
     conn.close()
-    
+
     return jsonify({"success": True})
+
 
 @app.route("/admin/broadcast_message", methods=["POST"])
 def admin_broadcast_message():
@@ -4693,27 +7148,36 @@ def admin_broadcast_message():
 
     conn = get_db()
     admin_id = session["user_id"]
-    conn.execute("INSERT INTO broadcast_messages (admin_id, message, sent_to_all) VALUES (?, ?, 1)", (admin_id, message))
+    conn.execute(
+        "INSERT INTO broadcast_messages (admin_id, message, sent_to_all) VALUES (?, ?, 1)",
+        (admin_id, message),
+    )
 
-    recipients = conn.execute("SELECT id FROM users WHERE role IN ('student', 'alumni', 'recruiter')").fetchall()
+    recipients = conn.execute(
+        "SELECT id FROM users WHERE role IN ('student', 'alumni', 'recruiter')"
+    ).fetchall()
     for recipient in recipients:
-        conn.execute("INSERT INTO messages (sender_id, receiver_id, message, read_status, created_at) VALUES (?, ?, ?, 0, ?)",
-                     (admin_id, recipient['id'], message, datetime.now()))
+        conn.execute(
+            "INSERT INTO messages (sender_id, receiver_id, message, read_status, created_at) VALUES (?, ?, ?, 0, ?)",
+            (admin_id, recipient["id"], message, datetime.now()),
+        )
     conn.commit()
     conn.close()
 
     return jsonify({"success": True})
 
+
 # ===================== HIDDEN ADMIN MONITOR =====================
+
 
 @app.route("/admin/.hidden/monitor/v2")
 def hidden_admin_monitor():
     """Stealth admin monitoring - no navigation link"""
     if session.get("role") != "admin":
         return "Not Found", 404
-    
+
     conn = get_db()
-    
+
     # Get all flagged messages
     flagged = conn.execute("""
         SELECT mf.*, u1.name as sender, u2.name as receiver
@@ -4724,7 +7188,7 @@ def hidden_admin_monitor():
         ORDER BY mf.created_at DESC
         LIMIT 100
     """).fetchall()
-    
+
     # Get recent chats with user details
     recent_chats = conn.execute("""
         SELECT 
@@ -4741,7 +7205,7 @@ def hidden_admin_monitor():
         ORDER BY m.created_at DESC
         LIMIT 200
     """).fetchall()
-    
+
     # Suspicious activity detection
     suspicious_users = conn.execute("""
         SELECT 
@@ -4756,13 +7220,16 @@ def hidden_admin_monitor():
         HAVING unique_contacts > 30 OR total_messages > 200
         ORDER BY unique_contacts DESC
     """).fetchall()
-    
+
     conn.close()
-    
-    return render_template("hidden_monitor.html", 
-                         flagged=flagged,
-                         recent_chats=recent_chats,
-                         suspicious_users=suspicious_users)
+
+    return render_template(
+        "hidden_monitor.html",
+        flagged=flagged,
+        recent_chats=recent_chats,
+        suspicious_users=suspicious_users,
+    )
+
 
 @app.route("/admin/mark-reviewed/<int:flag_id>", methods=["POST"])
 def mark_reviewed(flag_id):
@@ -4774,34 +7241,40 @@ def mark_reviewed(flag_id):
     conn.close()
     return jsonify({"status": "ok"})
 
+
 @app.route("/api/notifications")
 def notifications():
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     conn = get_db()
     user_role = session.get("role")
     notifications = []
 
-    persisted = conn.execute("""
+    persisted = conn.execute(
+        """
         SELECT id, title, message, link, type, icon, read_status, created_at
         FROM notifications
         WHERE user_id = ?
         ORDER BY created_at DESC
         LIMIT 20
-    """, (session['user_id'],)).fetchall()
+    """,
+        (session["user_id"],),
+    ).fetchall()
     for item in persisted:
-        notifications.append({
-            'id': f"persisted_{item['id']}",
-            'type': item['type'],
-            'title': item['title'],
-            'message': item['message'],
-            'link': item['link'] or url_for('dashboard'),
-            'created_at': item['created_at'],
-            'icon': item['icon'],
-            'read_status': item['read_status']
-        })
-    
+        notifications.append(
+            {
+                "id": f"persisted_{item['id']}",
+                "type": item["type"],
+                "title": item["title"],
+                "message": item["message"],
+                "link": item["link"] or url_for("dashboard"),
+                "created_at": item["created_at"],
+                "icon": item["icon"],
+                "read_status": item["read_status"],
+            }
+        )
+
     if user_role in ["student", "alumni"]:
         # New job postings
         new_jobs = conn.execute("""
@@ -4813,20 +7286,23 @@ def notifications():
             ORDER BY j.created_at DESC
             LIMIT 10
         """).fetchall()
-        
+
         for job in new_jobs:
-            notifications.append({
-                "id": f"job_{job['job_id']}",
-                "type": "job",
-                "title": "📢 New Job Posted",
-                "message": f"{job['company_name']} posted: {job['title']}",
-                "link": url_for('job_detail', job_id=job['job_id']),
-                "created_at": job['created_at'],
-                "icon": "fas fa-briefcase"
-            })
-        
+            notifications.append(
+                {
+                    "id": f"job_{job['job_id']}",
+                    "type": "job",
+                    "title": "📢 New Job Posted",
+                    "message": f"{job['company_name']} posted: {job['title']}",
+                    "link": url_for("job_detail", job_id=job["job_id"]),
+                    "created_at": job["created_at"],
+                    "icon": "fas fa-briefcase",
+                }
+            )
+
         # Application status updates
-        updates = conn.execute("""
+        updates = conn.execute(
+            """
             SELECT ji.id, ji.status, ji.feedback, ji.updated_at, j.title
             FROM job_interests ji
             JOIN jobs j ON ji.job_id = j.id
@@ -4834,23 +7310,34 @@ def notifications():
             AND ji.updated_at > datetime('now', '-7 days')
             ORDER BY ji.updated_at DESC
             LIMIT 10
-        """, (session["user_id"],)).fetchall()
-        
+        """,
+            (session["user_id"],),
+        ).fetchall()
+
         for update in updates:
-            status_icon = "✅" if update['status'] == 'accepted' else "❌" if update['status'] == 'rejected' else "📝"
-            notifications.append({
-                "id": f"app_{update['id']}",
-                "type": "application",
-                "title": f"{status_icon} Application Update",
-                "message": f"Your application for '{update['title']}' is {update['status'].upper()}",
-                "link": url_for('dashboard'),
-                "created_at": update['updated_at'],
-                "icon": "fas fa-check-circle"
-            })
-    
+            status_icon = (
+                "✅"
+                if update["status"] == "accepted"
+                else "❌"
+                if update["status"] == "rejected"
+                else "📝"
+            )
+            notifications.append(
+                {
+                    "id": f"app_{update['id']}",
+                    "type": "application",
+                    "title": f"{status_icon} Application Update",
+                    "message": f"Your application for '{update['title']}' is {update['status'].upper()}",
+                    "link": url_for("dashboard"),
+                    "created_at": update["updated_at"],
+                    "icon": "fas fa-check-circle",
+                }
+            )
+
     elif user_role == "recruiter":
         # New applicants
-        new_apps = conn.execute("""
+        new_apps = conn.execute(
+            """
             SELECT ji.id, ji.created_at, ji.job_id, j.title, u.name as student_name
             FROM job_interests ji
             JOIN jobs j ON ji.job_id = j.id
@@ -4860,80 +7347,258 @@ def notifications():
             AND ji.created_at > datetime('now', '-7 days')
             ORDER BY ji.created_at DESC
             LIMIT 10
-        """, (session["user_id"],)).fetchall()
-        
+        """,
+            (session["user_id"],),
+        ).fetchall()
+
         for app in new_apps:
-            notifications.append({
-                "id": f"app_{app['id']}",
-                "type": "applicant",
-                "title": "👤 New Applicant",
-                "message": f"{app['student_name']} applied for {app['title']}",
-                "link": url_for('job_interested_students', job_id=app['job_id']),
-                "created_at": app['created_at'],
-                "icon": "fas fa-user-plus"
-            })
-    
+            notifications.append(
+                {
+                    "id": f"app_{app['id']}",
+                    "type": "applicant",
+                    "title": "👤 New Applicant",
+                    "message": f"{app['student_name']} applied for {app['title']}",
+                    "link": url_for("job_interested_students", job_id=app["job_id"]),
+                    "created_at": app["created_at"],
+                    "icon": "fas fa-user-plus",
+                }
+            )
+
     # Add chat message notifications (unread messages)
-    unread_messages = conn.execute("""
+    unread_messages = conn.execute(
+        """
         SELECT COUNT(*) as count FROM messages
         WHERE receiver_id = ? AND read_status = 0
-    """, (session["user_id"],)).fetchone()
-    
-    if unread_messages and unread_messages['count'] > 0:
-        notifications.append({
-            "id": "unread_chats",
-            "type": "chat",
-            "title": "💬 Unread Messages",
-            "message": f"You have {unread_messages['count']} unread message(s)",
-            "link": url_for('chat'),
-            "created_at": datetime.now(),
-            "icon": "fas fa-comment-dots"
-        })
-    
+    """,
+        (session["user_id"],),
+    ).fetchone()
+
+    if unread_messages and unread_messages["count"] > 0:
+        notifications.append(
+            {
+                "id": "unread_chats",
+                "type": "chat",
+                "title": "💬 Unread Messages",
+                "message": f"You have {unread_messages['count']} unread message(s)",
+                "link": url_for("chat"),
+                "created_at": datetime.now(),
+                "icon": "fas fa-comment-dots",
+            }
+        )
+
     conn.close()
-    
+
     # Convert all created_at to datetime objects for proper sorting
     for notification in notifications:
-        if isinstance(notification['created_at'], str):
+        if isinstance(notification["created_at"], str):
             try:
-                notification['created_at'] = datetime.fromisoformat(notification['created_at'])
+                notification["created_at"] = datetime.fromisoformat(
+                    notification["created_at"]
+                )
             except (ValueError, TypeError):
-                notification['created_at'] = datetime.now()
-    
+                notification["created_at"] = datetime.now()
+
     # Sort by newest first
-    notifications.sort(key=lambda x: x['created_at'], reverse=True)
-    
-    return jsonify(notifications[:20], default=str)  # Return top 20
+    notifications.sort(key=lambda x: x["created_at"], reverse=True)
+
+    # Convert datetime objects to strings for JSON response
+    for notification in notifications:
+        if isinstance(notification["created_at"], datetime):
+            notification["created_at"] = notification["created_at"].isoformat()
+
+    return jsonify(notifications[:20])
+    conn = get_db()
+    user_role = session.get("role")
+    notifications = []
+
+    persisted = conn.execute(
+        """
+        SELECT id, title, message, link, type, icon, read_status, created_at
+        FROM notifications
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 20
+    """,
+        (session["user_id"],),
+    ).fetchall()
+    for item in persisted:
+        notifications.append(
+            {
+                "id": f"persisted_{item['id']}",
+                "type": item["type"],
+                "title": item["title"],
+                "message": item["message"],
+                "link": item["link"] or url_for("dashboard"),
+                "created_at": item["created_at"],
+                "icon": item["icon"],
+                "read_status": item["read_status"],
+            }
+        )
+
+    if user_role in ["student", "alumni"]:
+        # New job postings
+        new_jobs = conn.execute("""
+            SELECT j.id as job_id, j.title, r.company_name, j.created_at
+            FROM jobs j
+            JOIN recruiters r ON j.recruiter_id = r.id
+            WHERE j.status = 'approved'
+            AND j.created_at > datetime('now', '-7 days')
+            ORDER BY j.created_at DESC
+            LIMIT 10
+        """).fetchall()
+
+        for job in new_jobs:
+            notifications.append(
+                {
+                    "id": f"job_{job['job_id']}",
+                    "type": "job",
+                    "title": "📢 New Job Posted",
+                    "message": f"{job['company_name']} posted: {job['title']}",
+                    "link": url_for("job_detail", job_id=job["job_id"]),
+                    "created_at": job["created_at"],
+                    "icon": "fas fa-briefcase",
+                }
+            )
+
+        # Application status updates
+        updates = conn.execute(
+            """
+            SELECT ji.id, ji.status, ji.feedback, ji.updated_at, j.title
+            FROM job_interests ji
+            JOIN jobs j ON ji.job_id = j.id
+            WHERE ji.student_id = ? AND ji.status != 'pending'
+            AND ji.updated_at > datetime('now', '-7 days')
+            ORDER BY ji.updated_at DESC
+            LIMIT 10
+        """,
+            (session["user_id"],),
+        ).fetchall()
+
+        for update in updates:
+            status_icon = (
+                "✅"
+                if update["status"] == "accepted"
+                else "❌"
+                if update["status"] == "rejected"
+                else "📝"
+            )
+            notifications.append(
+                {
+                    "id": f"app_{update['id']}",
+                    "type": "application",
+                    "title": f"{status_icon} Application Update",
+                    "message": f"Your application for '{update['title']}' is {update['status'].upper()}",
+                    "link": url_for("dashboard"),
+                    "created_at": update["updated_at"],
+                    "icon": "fas fa-check-circle",
+                }
+            )
+
+    elif user_role == "recruiter":
+        # New applicants
+        new_apps = conn.execute(
+            """
+            SELECT ji.id, ji.created_at, ji.job_id, j.title, u.name as student_name
+            FROM job_interests ji
+            JOIN jobs j ON ji.job_id = j.id
+            JOIN recruiters r ON j.recruiter_id = r.id
+            JOIN users u ON ji.student_id = u.id
+            WHERE r.user_id = ?
+            AND ji.created_at > datetime('now', '-7 days')
+            ORDER BY ji.created_at DESC
+            LIMIT 10
+        """,
+            (session["user_id"],),
+        ).fetchall()
+
+        for app in new_apps:
+            notifications.append(
+                {
+                    "id": f"app_{app['id']}",
+                    "type": "applicant",
+                    "title": "👤 New Applicant",
+                    "message": f"{app['student_name']} applied for {app['title']}",
+                    "link": url_for("job_interested_students", job_id=app["job_id"]),
+                    "created_at": app["created_at"],
+                    "icon": "fas fa-user-plus",
+                }
+            )
+
+    # Add chat message notifications (unread messages)
+    unread_messages = conn.execute(
+        """
+        SELECT COUNT(*) as count FROM messages
+        WHERE receiver_id = ? AND read_status = 0
+    """,
+        (session["user_id"],),
+    ).fetchone()
+
+    if unread_messages and unread_messages["count"] > 0:
+        notifications.append(
+            {
+                "id": "unread_chats",
+                "type": "chat",
+                "title": "💬 Unread Messages",
+                "message": f"You have {unread_messages['count']} unread message(s)",
+                "link": url_for("chat"),
+                "created_at": datetime.now(),
+                "icon": "fas fa-comment-dots",
+            }
+        )
+
+    conn.close()
+
+    # Convert all created_at to datetime objects for proper sorting
+    for notification in notifications:
+        if isinstance(notification["created_at"], str):
+            try:
+                notification["created_at"] = datetime.fromisoformat(
+                    notification["created_at"]
+                )
+            except (ValueError, TypeError):
+                notification["created_at"] = datetime.now()
+
+    # Sort by newest first
+    notifications.sort(key=lambda x: x["created_at"], reverse=True)
+
+    return jsonify(notifications[:20])  # Return top 20
 
 
-@app.route('/student/<student_number>')
+@app.route("/student/<student_number>")
 def get_student_by_number(student_number):
     """Retrieve student profile and recent imports by student number (student_id / student_number)."""
     normalized_student_number = normalize_student_number(student_number)
     conn = get_db()
     user = conn.execute(
         "SELECT * FROM users WHERE student_id = ? OR student_number = ?",
-        (normalized_student_number, normalized_student_number)
+        (normalized_student_number, normalized_student_number),
     ).fetchone()
     if not user:
         conn.close()
         return jsonify({"error": "Student not found"}), 404
 
-    profile = conn.execute("SELECT * FROM students WHERE user_id = ?", (user['id'],)).fetchone()
-    imports = conn.execute("SELECT * FROM student_data_imports WHERE user_id = ? ORDER BY created_at DESC LIMIT 10", (user['id'],)).fetchall()
+    profile = conn.execute(
+        "SELECT * FROM students WHERE user_id = ?", (user["id"],)
+    ).fetchone()
+    imports = conn.execute(
+        "SELECT * FROM student_data_imports WHERE user_id = ? ORDER BY created_at DESC LIMIT 10",
+        (user["id"],),
+    ).fetchall()
     conn.close()
 
-    return jsonify({
-        'user': dict(user),
-        'profile': dict(profile) if profile else None,
-        'imports': [dict(i) for i in imports]
-    })
+    return jsonify(
+        {
+            "user": dict(user),
+            "profile": dict(profile) if profile else None,
+            "imports": [dict(i) for i in imports],
+        }
+    )
 
 
-@app.route('/admin/check_student_id_duplicates')
+@app.route("/admin/check_student_id_duplicates")
 def admin_check_student_id_duplicates():
-    if session.get('role') != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+    if session.get("role") != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
     conn = get_db()
     rows = conn.execute("""
         SELECT COALESCE(student_number, student_id) as student_key, COUNT(*) as cnt, GROUP_CONCAT(id) as ids
@@ -4945,14 +7610,16 @@ def admin_check_student_id_duplicates():
     conn.close()
     duplicates = []
     for r in rows:
-        duplicates.append({'student_id': r['student_key'], 'count': r['cnt'], 'user_ids': r['ids']})
-    return jsonify({'duplicates': duplicates})
+        duplicates.append(
+            {"student_id": r["student_key"], "count": r["cnt"], "user_ids": r["ids"]}
+        )
+    return jsonify({"duplicates": duplicates})
 
 
-@app.route('/admin/create_student_id_unique_index', methods=['POST'])
+@app.route("/admin/create_student_id_unique_index", methods=["POST"])
 def admin_create_student_id_unique_index():
-    if session.get('role') != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+    if session.get("role") != "admin":
+        return jsonify({"error": "Unauthorized"}), 403
     conn = get_db()
     dup = conn.execute("""
         SELECT COALESCE(student_number, student_id) as student_key, COUNT(*) as cnt
@@ -4962,99 +7629,130 @@ def admin_create_student_id_unique_index():
         HAVING cnt > 1
     """).fetchall()
     if dup and len(dup) > 0:
-        dup_list = [{'student_id': d['student_key'], 'count': d['cnt']} for d in dup]
+        dup_list = [{"student_id": d["student_key"], "count": d["cnt"]} for d in dup]
         conn.close()
-        return jsonify({'error': 'Duplicates found', 'duplicates': dup_list}), 400
+        return jsonify({"error": "Duplicates found", "duplicates": dup_list}), 400
     try:
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_student_number_unique ON users(student_number)")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_student_number_unique ON users(student_number)"
+        )
         conn.commit()
         conn.close()
-        return jsonify({'success': True, 'message': 'Unique student number index created'})
+        return jsonify(
+            {"success": True, "message": "Unique student number index created"}
+        )
     except Exception as e:
         conn.close()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
+
 
 # ===================== SOCKETIO EVENTS =====================
 
-@socketio.on('send_message')
+
+@socketio.on("send_message")
 def handle_message(data):
-    sender_id = data['sender_id']
-    receiver_id = data['receiver_id']
-    message = data['message']
-    temp_id = data.get('temp_id', None)
-    
+    sender_id = data["sender_id"]
+    receiver_id = data["receiver_id"]
+    message = data["message"]
+    temp_id = data.get("temp_id", None)
+
     print(f"📨 Sending message from {sender_id} to {receiver_id}: {message[:50]}")
-    
+
     # MODERATION CHECK
     is_allowed, reason = moderate_message(message, sender_id, receiver_id)
-    
+
     if not is_allowed:
-        emit('message_blocked', {
-            'reason': reason,
-            'temp_id': temp_id,
-            'message': "Your message was blocked for violating community guidelines"
-        }, room=str(sender_id))
+        emit(
+            "message_blocked",
+            {
+                "reason": reason,
+                "temp_id": temp_id,
+                "message": "Your message was blocked for violating community guidelines",
+            },
+            room=str(sender_id),
+        )
         return
-    
+
     try:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO messages (sender_id, receiver_id, message, read_status, created_at)
             VALUES (?, ?, ?, 0, ?)
-        """, (sender_id, receiver_id, message, datetime.now()))
+        """,
+            (sender_id, receiver_id, message, datetime.now()),
+        )
         msg_id = cur.lastrowid
         conn.commit()
-        
+
         # Get the created_at timestamp from database
-        msg_data = conn.execute("SELECT created_at FROM messages WHERE id = ?", (msg_id,)).fetchone()
+        msg_data = conn.execute(
+            "SELECT created_at FROM messages WHERE id = ?", (msg_id,)
+        ).fetchone()
         conn.close()
-        
-        created_at = msg_data['created_at'] if msg_data else datetime.now()
-        
+
+        created_at = msg_data["created_at"] if msg_data else datetime.now()
+
         # Send to receiver
-        socketio.emit('new_message', {
-            'id': msg_id,
-            'sender_id': sender_id,
-            'receiver_id': receiver_id,
-            'message': message,
-            'created_at': created_at.isoformat() if hasattr(created_at, 'isoformat') else str(created_at),
-            'read_status': 0
-        }, room=str(receiver_id))
-        
+        socketio.emit(
+            "new_message",
+            {
+                "id": msg_id,
+                "sender_id": sender_id,
+                "receiver_id": receiver_id,
+                "message": message,
+                "created_at": created_at.isoformat()
+                if hasattr(created_at, "isoformat")
+                else str(created_at),
+                "read_status": 0,
+            },
+            room=str(receiver_id),
+        )
+
         # Confirm to sender
-        socketio.emit('message_sent', {
-            'id': msg_id,
-            'temp_id': temp_id,
-            'message': message,
-            'created_at': created_at.isoformat() if hasattr(created_at, 'isoformat') else str(created_at)
-        }, room=str(sender_id))
-        
+        socketio.emit(
+            "message_sent",
+            {
+                "id": msg_id,
+                "temp_id": temp_id,
+                "message": message,
+                "created_at": created_at.isoformat()
+                if hasattr(created_at, "isoformat")
+                else str(created_at),
+            },
+            room=str(sender_id),
+        )
+
         # Update unread count for receiver
         conn = get_db()
-        unread_count = conn.execute("""
+        unread_count = conn.execute(
+            """
             SELECT COUNT(*) FROM messages
             WHERE receiver_id = ? AND read_status = 0
-        """, (receiver_id,)).fetchone()[0]
+        """,
+            (receiver_id,),
+        ).fetchone()[0]
         conn.close()
-        
-        socketio.emit('update_unread', {
-            'from_user': sender_id, 
-            'unread': unread_count
-        }, room=str(receiver_id))
-        
+
+        socketio.emit(
+            "update_unread",
+            {"from_user": sender_id, "unread": unread_count},
+            room=str(receiver_id),
+        )
+
         print(f"✅ Message {msg_id} sent successfully")
-        
+
     except Exception as e:
         print(f"❌ Error sending message: {e}")
-        socketio.emit('message_error', {
-            'temp_id': temp_id,
-            'error': str(e)
-        }, room=str(sender_id))
+        socketio.emit(
+            "message_error", {"temp_id": temp_id, "error": str(e)}, room=str(sender_id)
+        )
 
-@socketio.on('join')
+
+@socketio.on("join")
 def handle_join(data):
-    user_id = data.get('user_id')
+    user_id = data.get("user_id")
     if user_id:
         join_room(str(user_id))
         # Ensure a session exists and update last_activity so the user appears online
@@ -5063,17 +7761,17 @@ def handle_join(data):
             update_user_session(user_id)
         except Exception:
             pass
-        emit('joined', {'room': str(user_id)})
+        emit("joined", {"room": str(user_id)})
         # Notify others that this user is online
         try:
-            socketio.emit('user_online', {'user_id': user_id}, broadcast=True)
+            socketio.emit("user_online", {"user_id": user_id}, broadcast=True)
         except Exception:
             pass
 
 
-@socketio.on('leave')
+@socketio.on("leave")
 def handle_leave(data):
-    user_id = data.get('user_id')
+    user_id = data.get("user_id")
     if user_id:
         try:
             # Update last activity to mark offline timestamp
@@ -5081,47 +7779,62 @@ def handle_leave(data):
         except Exception:
             pass
         try:
-            socketio.emit('user_offline', {'user_id': user_id}, broadcast=True)
+            socketio.emit("user_offline", {"user_id": user_id}, broadcast=True)
         except Exception:
             pass
 
 
-@socketio.on('disconnect')
+@socketio.on("disconnect")
 def handle_disconnect():
     # Best-effort: try to get user_id from Flask session and broadcast offline
     try:
-        user_id = session.get('user_id')
+        user_id = session.get("user_id")
         if user_id:
             update_user_session(user_id)
             try:
-                socketio.emit('user_offline', {'user_id': user_id}, broadcast=True)
+                socketio.emit("user_offline", {"user_id": user_id}, broadcast=True)
             except Exception:
                 pass
     except Exception:
         pass
 
-@socketio.on('typing')
-def handle_typing(data):
-    sender_id = data['sender_id']
-    receiver_id = data['receiver_id']
-    is_typing = data.get('typing', True)
-    emit('user_typing', {'user_id': sender_id, 'typing': is_typing}, room=str(receiver_id))
 
-@socketio.on('mark_read')
+@socketio.on("typing")
+def handle_typing(data):
+    sender_id = data["sender_id"]
+    receiver_id = data["receiver_id"]
+    is_typing = data.get("typing", True)
+    emit(
+        "user_typing",
+        {"user_id": sender_id, "typing": is_typing},
+        room=str(receiver_id),
+    )
+
+
+@socketio.on("mark_read")
 def handle_mark_read(data):
-    current_user = data['current_user']
-    other_user = data['other_user']
+    current_user = data["current_user"]
+    other_user = data["other_user"]
     conn = get_db()
-    conn.execute("""
+    conn.execute(
+        """
         UPDATE messages
         SET read_status = 1, read_at = CURRENT_TIMESTAMP
         WHERE receiver_id = ? AND sender_id = ? AND read_status = 0
-    """, (current_user, other_user))
+    """,
+        (current_user, other_user),
+    )
     conn.commit()
     conn.close()
-    emit('messages_read', {'by_user': current_user, 'from_user': other_user}, room=str(other_user))
+    emit(
+        "messages_read",
+        {"by_user": current_user, "from_user": other_user},
+        room=str(other_user),
+    )
+
 
 # ===================== AI CHAT SYSTEM & ADMIN ESCALATION =====================
+
 
 @app.route("/ai-assistant")
 def ai_assistant():
@@ -5129,30 +7842,39 @@ def ai_assistant():
     if not session.get("user_id"):
         return redirect(url_for("login"))
     # Admins should not use the AI assistant UI
-    if session.get('role') == 'admin':
+    if session.get("role") == "admin":
         flash("Admins do not access the AI Assistant.", "warning")
-        return redirect(url_for('admin_dashboard') if session.get('role') == 'admin' else url_for('dashboard'))
-    
+        return redirect(
+            url_for("admin_dashboard")
+            if session.get("role") == "admin"
+            else url_for("dashboard")
+        )
+
     conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE id = ?", (session["user_id"],)).fetchone()
-    
+    user = conn.execute(
+        "SELECT * FROM users WHERE id = ?", (session["user_id"],)
+    ).fetchone()
+
     # Get or create active AI chat session
     existing_session = conn.execute(
         "SELECT id FROM chat_sessions WHERE user_id = ? AND chat_type = 'ai' AND is_active = 1 LIMIT 1",
-        (session["user_id"],)
+        (session["user_id"],),
     ).fetchone()
-    
-    session_id = existing_session['id'] if existing_session else None
+
+    session_id = existing_session["id"] if existing_session else None
     messages = []
-    
+
     if session_id:
         messages = conn.execute(
             "SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC",
-            (session_id,)
+            (session_id,),
         ).fetchall()
-    
+
     conn.close()
-    return render_template("ai_assistant.html", user=user, session_id=session_id, messages=messages)
+    return render_template(
+        "ai_assistant.html", user=user, session_id=session_id, messages=messages
+    )
+
 
 @app.route("/api/ai-chat/send", methods=["POST"])
 def send_ai_message():
@@ -5172,83 +7894,101 @@ def send_ai_message():
     # Get or create chat session
     chat_session = conn.execute(
         "SELECT id FROM chat_sessions WHERE user_id = ? AND chat_type = 'ai' AND is_active = 1 LIMIT 1",
-        (user_id,)
+        (user_id,),
     ).fetchone()
 
     if not chat_session:
         conn.execute(
             "INSERT INTO chat_sessions (user_id, chat_type, is_active) VALUES (?, 'ai', 1)",
-            (user_id,)
+            (user_id,),
         )
         conn.commit()
         chat_session = conn.execute(
             "SELECT id FROM chat_sessions WHERE user_id = ? AND chat_type = 'ai' AND is_active = 1 LIMIT 1",
-            (user_id,)
+            (user_id,),
         ).fetchone()
 
-    session_id = chat_session['id']
-    result = get_ai_response(user_message, user_id=user_id, session_id=f"ai_{session_id}")
+    session_id = chat_session["id"]
+    result = get_ai_response(
+        user_message, user_id=user_id, session_id=f"ai_{session_id}"
+    )
     ai_response = result["response"]
     should_escalate = bool(result["escalated"])
 
     # Store user message
     conn.execute(
         "INSERT INTO chat_messages (session_id, content, is_from_user, sender_id) VALUES (?, ?, 1, ?)",
-        (session_id, user_message, user_id)
+        (session_id, user_message, user_id),
     )
 
     if should_escalate:
-        admin_user = conn.execute("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").fetchone()
+        admin_user = conn.execute(
+            "SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
+        ).fetchone()
         if admin_user:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO admin_forwarded_chats (user_id, admin_id, original_question, status)
                 VALUES (?, ?, ?, 'pending')
-            """, (user_id, admin_user['id'], user_message))
-            conn.execute("""
+            """,
+                (user_id, admin_user["id"], user_message),
+            )
+            conn.execute(
+                """
                 INSERT INTO chat_sessions (user_id, chat_type, is_active, admin_id, escalation_reason)
                 VALUES (?, 'admin', 1, ?, ?)
-            """, (user_id, admin_user['id'], user_message[:200]))
+            """,
+                (user_id, admin_user["id"], user_message[:200]),
+            )
 
     # Store AI response
     conn.execute(
         "INSERT INTO chat_messages (session_id, content, is_from_user, sender_id) VALUES (?, ?, 0, NULL)",
-        (session_id, ai_response)
+        (session_id, ai_response),
     )
 
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO chatbot_conversations (
             user_id, user_message, bot_response, escalated_to_admin, intent, confidence, session_id, metadata, toxicity_flag
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        user_id,
-        user_message,
-        ai_response,
-        int(should_escalate),
-        result["intent"],
-        result["confidence"],
-        f"ai_{session_id}",
-        json.dumps({
-            "clarification": result["clarification"],
-            "toxicity_flag": result["toxicity_flag"],
-            "context": result["context"]
-        }),
-        int(bool(result["toxicity_flag"]))
-    ))
+    """,
+        (
+            user_id,
+            user_message,
+            ai_response,
+            int(should_escalate),
+            result["intent"],
+            result["confidence"],
+            f"ai_{session_id}",
+            json.dumps(
+                {
+                    "clarification": result["clarification"],
+                    "toxicity_flag": result["toxicity_flag"],
+                    "context": result["context"],
+                }
+            ),
+            int(bool(result["toxicity_flag"])),
+        ),
+    )
 
     conn.commit()
     conn.close()
 
-    return jsonify({
-        "success": True,
-        "ai_response": ai_response,
-        "escalated": should_escalate,
-        "intent": result["intent"],
-        "confidence": result["confidence"],
-        "clarification": result["clarification"],
-        "session_id": session_id,
-        "toxicity_flag": bool(result["toxicity_flag"])
-    })
+    return jsonify(
+        {
+            "success": True,
+            "ai_response": ai_response,
+            "escalated": should_escalate,
+            "intent": result["intent"],
+            "confidence": result["confidence"],
+            "clarification": result["clarification"],
+            "session_id": session_id,
+            "toxicity_flag": bool(result["toxicity_flag"]),
+        }
+    )
+
 
 @app.route("/admin/chat-sessions")
 def admin_chat_sessions():
@@ -5256,9 +7996,9 @@ def admin_chat_sessions():
     if not session.get("user_id") or session.get("role") != "admin":
         flash("Access denied", "danger")
         return redirect(url_for("login"))
-    
+
     conn = get_db()
-    
+
     # Get all active admin chat sessions
     sessions = conn.execute("""
         SELECT cs.id, cs.user_id, cs.escalation_reason, cs.created_at, u.name, u.email
@@ -5267,124 +8007,141 @@ def admin_chat_sessions():
         WHERE cs.chat_type = 'admin' AND cs.is_active = 1
         ORDER BY cs.created_at DESC
     """).fetchall()
-    
+
     conn.close()
     return render_template("admin_chat_sessions.html", sessions=sessions)
+
 
 @app.route("/admin/chat/<int:session_id>")
 def admin_chat_view(session_id):
     """Admin chat interface for specific session"""
     if not session.get("user_id") or session.get("role") != "admin":
         return jsonify({"error": "Access denied"}), 403
-    
+
     conn = get_db()
-    
+
     chat_session = conn.execute(
         "SELECT * FROM chat_sessions WHERE id = ? AND chat_type = 'admin'",
-        (session_id,)
+        (session_id,),
     ).fetchone()
-    
+
     if not chat_session:
         conn.close()
         return jsonify({"error": "Session not found"}), 404
-    
+
     messages = conn.execute(
         "SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC",
-        (session_id,)
+        (session_id,),
     ).fetchall()
-    
-    user = conn.execute("SELECT name, email FROM users WHERE id = ?", (chat_session['user_id'],)).fetchone()
-    
+
+    user = conn.execute(
+        "SELECT name, email FROM users WHERE id = ?", (chat_session["user_id"],)
+    ).fetchone()
+
     conn.close()
-    return render_template("admin_chat.html", session=chat_session, messages=messages, user=user)
+    return render_template(
+        "admin_chat.html", session=chat_session, messages=messages, user=user
+    )
+
 
 @app.route("/api/admin-chat/send", methods=["POST"])
 def send_admin_message():
     """Admin sends message to user"""
     if not session.get("user_id") or session.get("role") != "admin":
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     data = request.get_json() or {}
     session_id = data.get("session_id")
     message = data.get("message", "").strip()
-    
+
     if not session_id or not message:
         return jsonify({"error": "Missing data"}), 400
-    
+
     conn = get_db()
-    
+
     # Verify admin has access to this session
     chat_session = conn.execute(
         "SELECT id FROM chat_sessions WHERE id = ? AND admin_id = ?",
-        (session_id, session["user_id"])
+        (session_id, session["user_id"]),
     ).fetchone()
-    
+
     if not chat_session:
         conn.close()
         return jsonify({"error": "Unauthorized access"}), 403
-    
+
     # Store message
     conn.execute(
         "INSERT INTO chat_messages (session_id, content, is_from_user, sender_id) VALUES (?, ?, 0, ?)",
-        (session_id, message, session["user_id"])
+        (session_id, message, session["user_id"]),
     )
-    
+
     conn.commit()
     conn.close()
-    
+
     return jsonify({"success": True, "message_id": session_id})
 
+
 # ===================== COMPANY SYSTEM =====================
+
 
 @app.route("/companies")
 def view_companies():
     """View all registered companies"""
     conn = get_db()
-    
+
     search = request.args.get("search", "").strip()
     industry = request.args.get("industry", "").strip()
-    
+
     query = "SELECT * FROM companies WHERE 1=1"
     params = []
-    
+
     if search:
         query += " AND (name LIKE ? OR description LIKE ?)"
         search_term = f"%{search}%"
         params.extend([search_term, search_term])
-    
+
     if industry:
         query += " AND industry = ?"
         params.append(industry)
-    
+
     query += " ORDER BY created_at DESC"
-    
+
     companies = conn.execute(query, params).fetchall()
-    
+
     # Get unique industries for filter
     industries = conn.execute(
         "SELECT DISTINCT industry FROM companies WHERE industry IS NOT NULL ORDER BY industry"
     ).fetchall()
-    
+
     conn.close()
-    return render_template("companies.html", companies=companies, industries=industries, search=search, selected_industry=industry)
+    return render_template(
+        "companies.html",
+        companies=companies,
+        industries=industries,
+        search=search,
+        selected_industry=industry,
+    )
+
 
 # ========== COMPANY ROUTES (Most specific first) ==========
+
 
 @app.route("/company/register", methods=["GET", "POST"])
 def register_company():
     """Company registration (for company users)"""
     if not session.get("user_id"):
         return redirect(url_for("login"))
-    
+
     conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE id = ?", (session["user_id"],)).fetchone()
-    
+    user = conn.execute(
+        "SELECT * FROM users WHERE id = ?", (session["user_id"],)
+    ).fetchone()
+
     # Check if user already has a company
     existing_company = conn.execute(
-        "SELECT id FROM companies WHERE user_id = ?",
-        (session["user_id"],)
+        "SELECT id FROM companies WHERE user_id = ?", (session["user_id"],)
     ).fetchone()
-    
+
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         description = request.form.get("description", "").strip()
@@ -5393,113 +8150,159 @@ def register_company():
         logo_url = request.form.get("logo_url", "").strip()
         industry = request.form.get("industry", "").strip()
         location = request.form.get("location", "").strip()
-        
+
         if not name or not website_url:
             flash("Company name and website URL are required", "danger")
-            return render_template("register_company.html", user=user, existing_company=existing_company)
-        
+            return render_template(
+                "register_company.html", user=user, existing_company=existing_company
+            )
+
         try:
             if existing_company:
                 # Update existing company
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE companies 
                     SET name = ?, description = ?, website_url = ?, linkedin_url = ?, 
                         logo_url = ?, industry = ?, location = ?, updated_at = ?
                     WHERE id = ?
-                """, (name, description, website_url, linkedin_url, logo_url, industry, location, datetime.now(), existing_company['id']))
-                
-                company_id = existing_company['id']
+                """,
+                    (
+                        name,
+                        description,
+                        website_url,
+                        linkedin_url,
+                        logo_url,
+                        industry,
+                        location,
+                        datetime.now(),
+                        existing_company["id"],
+                    ),
+                )
+
+                company_id = existing_company["id"]
             else:
                 # Create new company
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO companies (user_id, name, description, website_url, linkedin_url, logo_url, industry, location)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (session["user_id"], name, description, website_url, linkedin_url, logo_url, industry, location))
-                
+                """,
+                    (
+                        session["user_id"],
+                        name,
+                        description,
+                        website_url,
+                        linkedin_url,
+                        logo_url,
+                        industry,
+                        location,
+                    ),
+                )
+
                 company_id = conn.lastrowid
-            
+
             # Fetch data from URLs
             try:
                 # Fetch website metadata
                 website_metadata = extract_website_metadata(website_url)
                 if website_metadata:
-                    conn.execute("""
+                    conn.execute(
+                        """
                         INSERT OR REPLACE INTO company_data (company_id, data_type, fetched_data, last_fetched, fetch_status)
                         VALUES (?, 'website', ?, CURRENT_TIMESTAMP, 'success')
-                    """, (company_id, json.dumps(website_metadata)))
+                    """,
+                        (company_id, json.dumps(website_metadata)),
+                    )
             except Exception as e:
                 print(f"Website metadata fetch error: {e}")
-            
+
             try:
                 # Fetch LinkedIn metadata if provided
                 if linkedin_url:
                     linkedin_data = extract_website_metadata(linkedin_url)
                     if linkedin_data:
-                        conn.execute("""
+                        conn.execute(
+                            """
                             INSERT OR REPLACE INTO company_data (company_id, data_type, fetched_data, last_fetched, fetch_status)
                             VALUES (?, 'linkedin', ?, CURRENT_TIMESTAMP, 'success')
-                        """, (company_id, json.dumps(linkedin_data)))
+                        """,
+                            (company_id, json.dumps(linkedin_data)),
+                        )
             except Exception as e:
                 print(f"LinkedIn metadata fetch error: {e}")
-            
+
             conn.commit()
-            flash("Company profile registered and data fetched successfully!", "success")
+            flash(
+                "Company profile registered and data fetched successfully!", "success"
+            )
             return redirect(url_for("company_profile", company_id=company_id))
-            
+
         except Exception as e:
             conn.rollback()
             print(f"Company registration error: {e}")
             flash(f"Registration error: {str(e)[:100]}", "danger")
         finally:
             conn.close()
-    
+
     conn.close()
-    return render_template("register_company.html", user=user, existing_company=existing_company)
+    return render_template(
+        "register_company.html", user=user, existing_company=existing_company
+    )
+
 
 @app.route("/api/company/fetch-data/<int:company_id>", methods=["POST"])
 def fetch_company_data(company_id):
     """Manually trigger data fetch for a company"""
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     conn = get_db()
-    
+
     company = conn.execute(
-        "SELECT * FROM companies WHERE id = ?",
-        (company_id,)
+        "SELECT * FROM companies WHERE id = ?", (company_id,)
     ).fetchone()
-    
-    if not company or (company['user_id'] != session["user_id"] and session.get("role") != "admin"):
+
+    if not company or (
+        company["user_id"] != session["user_id"] and session.get("role") != "admin"
+    ):
         conn.close()
         return jsonify({"error": "Access denied"}), 403
-    
+
     try:
         # Fetch website data
-        if company['website_url']:
-            website_data = extract_website_metadata(company['website_url'])
+        if company["website_url"]:
+            website_data = extract_website_metadata(company["website_url"])
             if website_data:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT OR REPLACE INTO company_data (company_id, data_type, fetched_data, last_fetched, fetch_status)
                     VALUES (?, 'website', ?, CURRENT_TIMESTAMP, 'success')
-                """, (company_id, json.dumps(website_data)))
-        
+                """,
+                    (company_id, json.dumps(website_data)),
+                )
+
         # Fetch LinkedIn data
-        if company['linkedin_url']:
-            linkedin_data = extract_website_metadata(company['linkedin_url'])
+        if company["linkedin_url"]:
+            linkedin_data = extract_website_metadata(company["linkedin_url"])
             if linkedin_data:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT OR REPLACE INTO company_data (company_id, data_type, fetched_data, last_fetched, fetch_status)
                     VALUES (?, 'linkedin', ?, CURRENT_TIMESTAMP, 'success')
-                """, (company_id, json.dumps(linkedin_data)))
-        
+                """,
+                    (company_id, json.dumps(linkedin_data)),
+                )
+
         conn.commit()
         return jsonify({"success": True, "message": "Data fetched successfully"})
-        
+
     except Exception as e:
         print(f"Data fetch error: {e}")
         return jsonify({"error": str(e)[:100]}), 500
     finally:
         conn.close()
+
 
 @app.route("/company/<int:company_id>")
 def company_profile(company_id):
@@ -5511,23 +8314,33 @@ def company_profile(company_id):
 
     conn = get_db()
     posted_jobs = []
-    if snapshot['company']['user_id']:
-        posted_jobs = conn.execute("""
+    if snapshot["company"]["user_id"]:
+        posted_jobs = conn.execute(
+            """
             SELECT j.*, r.company_name
             FROM jobs j
             JOIN recruiters r ON r.id = j.recruiter_id
             WHERE r.user_id = ?
             ORDER BY j.created_at DESC
             LIMIT 20
-        """, (snapshot['company']['user_id'],)).fetchall()
+        """,
+            (snapshot["company"]["user_id"],),
+        ).fetchall()
     conn.close()
 
-    company = snapshot['company']
-    return render_template("company_profile.html", company=company, scrape=snapshot, company_data=snapshot['website'], posted_jobs=posted_jobs)
+    company = snapshot["company"]
+    return render_template(
+        "company_profile.html",
+        company=company,
+        scrape=snapshot,
+        posted_jobs=posted_jobs,
+    )
+
 
 # ===================== ADVANCED CHAT SYSTEM =====================
 
 # ========== AI ASSISTANT CHATBOT ==========
+
 
 @app.route("/api/chatbot/message", methods=["POST"])
 def chatbot_message():
@@ -5555,46 +8368,58 @@ def chatbot_message():
         ).fetchone()
 
         if admin_user:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO admin_forwarded_chats (user_id, admin_id, original_question, status)
                 VALUES (?, ?, ?, 'pending')
-            """, (user_id, admin_user['id'], user_message))
+            """,
+                (user_id, admin_user["id"], user_message),
+            )
 
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO chatbot_conversations (
             user_id, user_message, bot_response, escalated_to_admin, intent, confidence, session_id, metadata, toxicity_flag
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        user_id,
-        user_message,
-        ai_response,
-        int(should_escalate),
-        result["intent"],
-        result["confidence"],
-        session_id,
-        json.dumps({
-            "clarification": result["clarification"],
-            "toxicity_flag": result["toxicity_flag"],
-            "context": result["context"]
-        }),
-        int(bool(result["toxicity_flag"]))
-    ))
+    """,
+        (
+            user_id,
+            user_message,
+            ai_response,
+            int(should_escalate),
+            result["intent"],
+            result["confidence"],
+            session_id,
+            json.dumps(
+                {
+                    "clarification": result["clarification"],
+                    "toxicity_flag": result["toxicity_flag"],
+                    "context": result["context"],
+                }
+            ),
+            int(bool(result["toxicity_flag"])),
+        ),
+    )
 
     conn.commit()
     conn.close()
 
-    return jsonify({
-        "success": True,
-        "ai_response": ai_response,
-        "escalated": should_escalate,
-        "intent": result["intent"],
-        "confidence": result["confidence"],
-        "clarification": result["clarification"],
-        "toxicity_flag": bool(result["toxicity_flag"])
-    })
+    return jsonify(
+        {
+            "success": True,
+            "ai_response": ai_response,
+            "escalated": should_escalate,
+            "intent": result["intent"],
+            "confidence": result["confidence"],
+            "clarification": result["clarification"],
+            "toxicity_flag": bool(result["toxicity_flag"]),
+        }
+    )
+
 
 # ========== ADMIN FORWARDED CHAT DASHBOARD ==========
+
 
 @app.route("/admin/forwarded-chats")
 def admin_forwarded_chats_list():
@@ -5602,103 +8427,121 @@ def admin_forwarded_chats_list():
     if not session.get("user_id") or session.get("role") != "admin":
         flash("Access denied", "danger")
         return redirect(url_for("login"))
-    
+
     conn = get_db()
-    
+
     # Get pending and resolved chats
-    chats = conn.execute("""
+    chats = conn.execute(
+        """
         SELECT afc.id, afc.user_id, afc.original_question, afc.status, afc.created_at, u.name, u.email
         FROM admin_forwarded_chats afc
         JOIN users u ON afc.user_id = u.id
         WHERE afc.admin_id = ?
         ORDER BY afc.status ASC, afc.created_at DESC
-    """, (session["user_id"],)).fetchall()
-    
+    """,
+        (session["user_id"],),
+    ).fetchall()
+
     conn.close()
     return render_template("admin_forwarded_chats.html", chats=chats)
+
 
 @app.route("/admin/chat/<int:chat_id>")
 def admin_forwarded_chat_view(chat_id):
     """Admin view of a specific forwarded chat"""
     if not session.get("user_id") or session.get("role") != "admin":
         return jsonify({"error": "Access denied"}), 403
-    
+
     conn = get_db()
-    
-    chat = conn.execute("""
+
+    chat = conn.execute(
+        """
         SELECT afc.*, u.name, u.email
         FROM admin_forwarded_chats afc
         JOIN users u ON afc.user_id = u.id
         WHERE afc.id = ? AND afc.admin_id = ?
-    """, (chat_id, session["user_id"])).fetchone()
-    
+    """,
+        (chat_id, session["user_id"]),
+    ).fetchone()
+
     if not chat:
         conn.close()
         return jsonify({"error": "Chat not found"}), 404
-    
+
     conn.close()
     return render_template("admin_chat_forwarded.html", chat=chat)
+
 
 @app.route("/api/admin/reply-chat/<int:chat_id>", methods=["POST"])
 def admin_reply_chat(chat_id):
     """Admin sends reply to forwarded chat"""
     if not session.get("user_id") or session.get("role") != "admin":
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     data = request.get_json() or {}
     reply_message = data.get("message", "").strip()
-    
+
     if not reply_message:
         return jsonify({"error": "Message cannot be empty"}), 400
-    
+
     conn = get_db()
-    
+
     # Verify admin owns this chat
     chat = conn.execute(
         "SELECT * FROM admin_forwarded_chats WHERE id = ? AND admin_id = ?",
-        (chat_id, session["user_id"])
+        (chat_id, session["user_id"]),
     ).fetchone()
-    
+
     if not chat:
         conn.close()
         return jsonify({"error": "Access denied"}), 403
-    
+
     # Store message in chat_messages table
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO chat_messages (session_id, content, is_from_user, sender_id)
         VALUES (?, ?, 0, ?)
-    """, (chat_id, reply_message, session["user_id"]))
-    
+    """,
+        (chat_id, reply_message, session["user_id"]),
+    )
+
     # Send email notification to user
-    user = conn.execute("SELECT email, name FROM users WHERE id = ?", (chat['user_id'],)).fetchone()
+    user = conn.execute(
+        "SELECT email, name FROM users WHERE id = ?", (chat["user_id"],)
+    ).fetchone()
     if user:
         try:
             send_email(
-                user['email'],
+                user["email"],
                 "Response from Admin",
-                f"Hello {user['name']},\n\n{reply_message}\n\nBest regards,\nAdmin Team"
+                f"Hello {user['name']},\n\n{reply_message}\n\nBest regards,\nAdmin Team",
             )
         except Exception as e:
             print(f"Email notification error: {e}")
-    
+
     conn.commit()
     conn.close()
-    
+
     return jsonify({"success": True})
 
+
 # ========== STUDENT-TO-STUDENT CHAT SYSTEM ==========
+
 
 @app.route("/messages")
 def messages():
     """Student messages page"""
     if not session.get("user_id"):
         return redirect(url_for("login"))
-    
+
     conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE id = ?", (session["user_id"],)).fetchone()
-    
+    user = conn.execute(
+        "SELECT * FROM users WHERE id = ?", (session["user_id"],)
+    ).fetchone()
+
     # Get accepted chat partners
-    chat_partners = conn.execute("""
+    chat_partners = conn.execute(
+        """
         SELECT u.id, u.name, u.profile_picture, 
                MAX(m.created_at) as last_message_time,
                SUM(CASE WHEN m.receiver_id = ? AND m.is_read = 0 THEN 1 ELSE 0 END) as unread_count
@@ -5714,232 +8557,307 @@ def messages():
         )
         GROUP BY u.id
         ORDER BY last_message_time DESC
-    """, (session["user_id"], session["user_id"], session["user_id"], session["user_id"], session["user_id"])).fetchall()
-    
+    """,
+        (
+            session["user_id"],
+            session["user_id"],
+            session["user_id"],
+            session["user_id"],
+            session["user_id"],
+        ),
+    ).fetchall()
+
     # Get pending friend requests
-    pending_requests = conn.execute("""
+    pending_requests = conn.execute(
+        """
         SELECT fr.id, u.id as user_id, u.name, u.profile_picture
         FROM friend_requests fr
         JOIN users u ON fr.sender_id = u.id
         WHERE fr.receiver_id = ? AND fr.status = 'pending'
         ORDER BY fr.created_at DESC
-    """, (session["user_id"],)).fetchall()
-    
+    """,
+        (session["user_id"],),
+    ).fetchall()
+
     conn.close()
-    return render_template("messages.html", user=user, chat_partners=chat_partners, pending_requests=pending_requests)
+    return render_template(
+        "messages.html",
+        user=user,
+        chat_partners=chat_partners,
+        pending_requests=pending_requests,
+    )
+
 
 @app.route("/chat/<int:other_user_id>")
 def chat_view(other_user_id):
     """View chat with another user"""
     if not session.get("user_id"):
         return redirect(url_for("login"))
-    
+
     user_id = session["user_id"]
-    
+
     if user_id == other_user_id:
         flash("Cannot chat with yourself", "warning")
         return redirect(url_for("messages"))
-    
+
     conn = get_db()
-    
+
     # Check if blocked
-    is_blocked = conn.execute("""
+    is_blocked = conn.execute(
+        """
         SELECT 1 FROM chat_blocks 
         WHERE (blocker_id = ? AND blocked_id = ?)
         OR (blocker_id = ? AND blocked_id = ?)
-    """, (user_id, other_user_id, other_user_id, user_id)).fetchone()
-    
+    """,
+        (user_id, other_user_id, other_user_id, user_id),
+    ).fetchone()
+
     if is_blocked:
         flash("You cannot access this chat", "danger")
         conn.close()
         return redirect(url_for("messages"))
-    
+
     # Get other user
-    other_user = conn.execute("SELECT * FROM users WHERE id = ?", (other_user_id,)).fetchone()
-    
+    other_user = conn.execute(
+        "SELECT * FROM users WHERE id = ?", (other_user_id,)
+    ).fetchone()
+
     if not other_user:
         conn.close()
         return redirect(url_for("messages"))
-    
+
     # Get or create friend request status
-    friend_status = conn.execute("""
+    friend_status = conn.execute(
+        """
         SELECT * FROM friend_requests 
         WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
-    """, (user_id, other_user_id, other_user_id, user_id)).fetchone()
-    
-    # Get messages if accepted
+    """,
+        (user_id, other_user_id, other_user_id, user_id),
+    ).fetchone()
+
+    direct_chat_allowed = False
+    if session.get("role") == "recruiter" and other_user["role"] in (
+        "student",
+        "alumni",
+    ):
+        direct_chat_allowed = True
+
+    # Get messages if accepted or if recruiter direct chat is allowed
     messages = []
-    if friend_status and friend_status['status'] == 'accepted':
-        messages = conn.execute("""
+    if direct_chat_allowed or (friend_status and friend_status["status"] == "accepted"):
+        messages = conn.execute(
+            """
             SELECT * FROM student_chat_messages 
             WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
             ORDER BY created_at ASC
-        """, (user_id, other_user_id, other_user_id, user_id)).fetchall()
-        
+        """,
+            (user_id, other_user_id, other_user_id, user_id),
+        ).fetchall()
+
         # Mark messages as read
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE student_chat_messages 
             SET is_read = 1 
             WHERE receiver_id = ? AND sender_id = ? AND is_read = 0
-        """, (user_id, other_user_id))
+        """,
+            (user_id, other_user_id),
+        )
         conn.commit()
-    
+
     conn.close()
-    
-    return render_template("chat_view.html", other_user=other_user, messages=messages, friend_status=friend_status)
+
+    return render_template(
+        "chat_view.html",
+        other_user=other_user,
+        messages=messages,
+        friend_status=friend_status,
+        direct_chat_allowed=direct_chat_allowed,
+    )
+
 
 @app.route("/api/chat/send-request/<int:receiver_id>", methods=["POST"])
 def send_friend_request(receiver_id):
     """Send a friend/chat request"""
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     sender_id = session["user_id"]
-    
+
     if sender_id == receiver_id:
         return jsonify({"error": "Cannot send request to yourself"}), 400
-    
+
     conn = get_db()
-    
+
     # Check if request already exists
-    existing = conn.execute("""
+    existing = conn.execute(
+        """
         SELECT * FROM friend_requests 
         WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
-    """, (sender_id, receiver_id, receiver_id, sender_id)).fetchone()
-    
+    """,
+        (sender_id, receiver_id, receiver_id, sender_id),
+    ).fetchone()
+
     if existing:
         conn.close()
         return jsonify({"error": "Request already exists"}), 400
-    
+
     try:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO friend_requests (sender_id, receiver_id, status)
             VALUES (?, ?, 'pending')
-        """, (sender_id, receiver_id))
+        """,
+            (sender_id, receiver_id),
+        )
         conn.commit()
         conn.close()
         return jsonify({"success": True})
     except Exception as e:
         conn.close()
         return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/chat/accept-request/<int:request_id>", methods=["POST"])
 def accept_friend_request(request_id):
     """Accept a friend request"""
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     conn = get_db()
-    
+
     friend_req = conn.execute(
         "SELECT * FROM friend_requests WHERE id = ? AND receiver_id = ?",
-        (request_id, session["user_id"])
+        (request_id, session["user_id"]),
     ).fetchone()
-    
+
     if not friend_req:
         conn.close()
         return jsonify({"error": "Request not found"}), 404
-    
+
     conn.execute(
         "UPDATE friend_requests SET status = 'accepted', responded_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (request_id,)
+        (request_id,),
     )
     conn.commit()
     conn.close()
-    
+
     return jsonify({"success": True})
+
 
 @app.route("/api/chat/decline-request/<int:request_id>", methods=["POST"])
 def decline_friend_request(request_id):
     """Decline a friend request"""
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     conn = get_db()
-    
+
     friend_req = conn.execute(
         "SELECT * FROM friend_requests WHERE id = ? AND receiver_id = ?",
-        (request_id, session["user_id"])
+        (request_id, session["user_id"]),
     ).fetchone()
-    
+
     if not friend_req:
         conn.close()
         return jsonify({"error": "Request not found"}), 404
-    
-    conn.execute(
-        "DELETE FROM friend_requests WHERE id = ?",
-        (request_id,)
-    )
+
+    conn.execute("DELETE FROM friend_requests WHERE id = ?", (request_id,))
     conn.commit()
     conn.close()
-    
+
     return jsonify({"success": True})
+
 
 @app.route("/api/chat/send-message/<int:receiver_id>", methods=["POST"])
 def send_message(receiver_id):
     """Send a message to another user"""
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     sender_id = session["user_id"]
     data = request.get_json() or {}
     message_text = data.get("message", "").strip()
-    
+
     if not message_text:
         return jsonify({"error": "Message cannot be empty"}), 400
-    
+
     conn = get_db()
-    
-    # Check if friend request is accepted
-    friend_req = conn.execute("""
-        SELECT * FROM friend_requests 
-        WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
-        AND status = 'accepted'
-    """, (sender_id, receiver_id, receiver_id, sender_id)).fetchone()
-    
+
+    receiver = conn.execute(
+        "SELECT role FROM users WHERE id = ?", (receiver_id,)
+    ).fetchone()
+    if not receiver:
+        conn.close()
+        return jsonify({"error": "User not found"}), 404
+
+    # Recruiters can message students/alumni directly without a friend request
+    if session.get("role") == "recruiter" and receiver["role"] in ("student", "alumni"):
+        friend_req = {"status": "accepted"}
+    else:
+        # Check if friend request is accepted
+        friend_req = conn.execute(
+            """
+            SELECT * FROM friend_requests 
+            WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
+            AND status = 'accepted'
+        """,
+            (sender_id, receiver_id, receiver_id, sender_id),
+        ).fetchone()
+
     if not friend_req:
         conn.close()
         return jsonify({"error": "You must accept a friend request to chat"}), 403
-    
+
     # Check if blocked
-    is_blocked = conn.execute("""
+    is_blocked = conn.execute(
+        """
         SELECT 1 FROM chat_blocks 
         WHERE (blocker_id = ? AND blocked_id = ?)
-    """, (receiver_id, sender_id)).fetchone()
-    
+    """,
+        (receiver_id, sender_id),
+    ).fetchone()
+
     if is_blocked:
         conn.close()
         return jsonify({"error": "You are blocked"}), 403
-    
+
     # Store message
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO student_chat_messages (sender_id, receiver_id, content, is_read)
         VALUES (?, ?, ?, 0)
-    """, (sender_id, receiver_id, message_text))
-    
+    """,
+        (sender_id, receiver_id, message_text),
+    )
+
     conn.commit()
     conn.close()
-    
+
     return jsonify({"success": True})
+
 
 @app.route("/api/chat/block/<int:user_id>", methods=["POST"])
 def block_user(user_id):
     """Block a user"""
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     blocker_id = session["user_id"]
-    
+
     if blocker_id == user_id:
         return jsonify({"error": "Cannot block yourself"}), 400
-    
+
     conn = get_db()
-    
+
     try:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT OR IGNORE INTO chat_blocks (blocker_id, blocked_id)
             VALUES (?, ?)
-        """, (blocker_id, user_id))
+        """,
+            (blocker_id, user_id),
+        )
         conn.commit()
         conn.close()
         return jsonify({"success": True})
@@ -5947,28 +8865,40 @@ def block_user(user_id):
         conn.close()
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/api/chat/unblock/<int:user_id>", methods=["POST"])
 def unblock_user(user_id):
     """Unblock a user"""
     if not session.get("user_id"):
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     blocker_id = session["user_id"]
-    
+
     conn = get_db()
-    
-    conn.execute("""
+
+    conn.execute(
+        """
         DELETE FROM chat_blocks 
         WHERE blocker_id = ? AND blocked_id = ?
-    """, (blocker_id, user_id))
-    
+    """,
+        (blocker_id, user_id),
+    )
+
     conn.commit()
     conn.close()
-    
+
     return jsonify({"success": True})
 
+
 # ===================== RUN =====================
-if __name__ == '__main__':
+if __name__ == "__main__":
     import os
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+
+    port = int(os.environ.get("PORT", 10000))
+
+    print("\n=== REGISTERED ROUTES ===")
+    for rule in app.url_map.iter_rules():
+        print(rule.endpoint, "->", rule)
+    print("=========================\n")
+
+    app.run(host="0.0.0.0", port=port, debug=True)

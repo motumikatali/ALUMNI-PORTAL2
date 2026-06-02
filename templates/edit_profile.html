@@ -4,20 +4,100 @@
 
 {% block extra_css %}
 <style>
-    .profile-edit-card { border: none; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
-    .card-header { background: linear-gradient(135deg, #495057, #343a40); color: white; padding: 1.5rem; }
-    .profile-preview { width: 120px; height: 120px; border-radius: 50%; object-fit: cover; border: 3px solid white; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-    .form-label { font-weight: 600; color: #2d3748; margin-bottom: 0.5rem; }
-    .form-control, .form-select { border-radius: 12px; border: 1px solid #e9ecef; padding: 0.75rem 1rem; }
-    .form-control:focus, .form-select:focus { border-color: #495057; box-shadow: 0 0 0 3px rgba(73,80,87,0.12); }
-    .btn-save { background: linear-gradient(135deg, #343a40, #495057); border: none; border-radius: 30px; padding: 12px; font-weight: 600; transition: all 0.2s; }
-    .btn-save:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.18); }
-    .upload-btn { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 30px; padding: 8px 20px; transition: all 0.2s; }
-    .upload-btn:hover { background: #e9ecef; }
-    .section-summary { background: #f8f9fa; border-radius: 14px; padding: 1rem; margin-top: 1rem; }
-    .course-checkbox-list { max-height: 260px; overflow-y: auto; border: 1px solid #e9ecef; border-radius: 12px; padding: 1rem; background: white; }
-    .course-checkbox-item { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
-    .badge-soft { background: rgba(52, 58, 64, 0.08); color: #343a40; }
+    .profile-edit-card {
+        border: none;
+        border-radius: 20px;
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    }
+
+    .card-header {
+        background: linear-gradient(135deg, #495057, #343a40);
+        color: white;
+        padding: 1.5rem;
+    }
+
+    .profile-preview {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 3px solid white;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .form-label {
+        font-weight: 600;
+        color: #2d3748;
+        margin-bottom: 0.5rem;
+    }
+
+    .form-control,
+    .form-select {
+        border-radius: 12px;
+        border: 1px solid #e9ecef;
+        padding: 0.75rem 1rem;
+    }
+
+    .form-control:focus,
+    .form-select:focus {
+        border-color: #495057;
+        box-shadow: 0 0 0 3px rgba(73, 80, 87, 0.12);
+    }
+
+    .btn-save {
+        background: linear-gradient(135deg, #343a40, #495057);
+        border: none;
+        border-radius: 30px;
+        padding: 12px;
+        font-weight: 600;
+        transition: all 0.2s;
+    }
+
+    .btn-save:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.18);
+    }
+
+    .upload-btn {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 30px;
+        padding: 8px 20px;
+        transition: all 0.2s;
+    }
+
+    .upload-btn:hover {
+        background: #e9ecef;
+    }
+
+    .section-summary {
+        background: #f8f9fa;
+        border-radius: 14px;
+        padding: 1rem;
+        margin-top: 1rem;
+    }
+
+    .course-checkbox-list {
+        max-height: 260px;
+        overflow-y: auto;
+        border: 1px solid #e9ecef;
+        border-radius: 12px;
+        padding: 1rem;
+        background: white;
+    }
+
+    .course-checkbox-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .badge-soft {
+        background: rgba(52, 58, 64, 0.08);
+        color: #343a40;
+    }
 </style>
 {% endblock %}
 
@@ -29,14 +109,16 @@
                 <div class="card-header">
                     <div class="d-flex align-items-start justify-content-between flex-column flex-md-row gap-3">
                         <div>
-                            <h4 class="card-title mb-1"><i class="fas fa-user-edit me-2"></i> Professional Student Profile</h4>
-                            <p class="text-white-50 mb-0">Your dashboard for academic credentials, portal import and recruiter-ready documents.</p>
+                            <h4 class="card-title mb-1"><i class="fas fa-user-edit me-2"></i> Professional Student
+                                Profile</h4>
+                            <p class="text-white-50 mb-0">Your dashboard for academic credentials, portal import and
+                                recruiter-ready documents.</p>
                         </div>
                         <div class="text-end">
                             {% if profile and profile.certificate_verified %}
-                                <span class="badge bg-success">Verified Student</span>
+                            <span class="badge bg-success">Verified Student</span>
                             {% else %}
-                                <span class="badge bg-warning text-dark">Verification Pending</span>
+                            <span class="badge bg-warning text-dark">Verification Pending</span>
                             {% endif %}
                         </div>
                     </div>
@@ -44,20 +126,28 @@
                 <div class="card-body p-4">
                     <div class="row">
                         <div class="col-md-4 text-center mb-4">
-                            <img src="{{ url_for('static', filename='uploads/profiles/' + (user.profile_picture if user.profile_picture else 'default-avatar.png')) }}" class="profile-preview mb-3" id="profilePreview">
+                            <img src="{{ url_for('static', filename='uploads/profiles/' + (user.profile_picture if user.profile_picture else 'default-avatar.png')) }}"
+                                class="profile-preview mb-3" id="profilePreview">
                             <div>
-                                <form method="POST" action="{{ url_for('upload_profile_picture') }}" enctype="multipart/form-data" id="profilePicForm">
-                                    <input type="file" name="profile_pic" accept="image/*" style="display: none;" id="profilePicInput">
-                                    <button type="button" class="btn upload-btn btn-sm" onclick="document.getElementById('profilePicInput').click()"><i class="fas fa-camera me-1"></i> Change Photo</button>
+                                <form method="POST" action="{{ url_for('upload_profile_picture') }}"
+                                    enctype="multipart/form-data" id="profilePicForm">
+                                    <input type="file" name="profile_pic" accept="image/*" style="display: none;"
+                                        id="profilePicInput">
+                                    <button type="button" class="btn upload-btn btn-sm"
+                                        onclick="document.getElementById('profilePicInput').click()"><i
+                                            class="fas fa-camera me-1"></i> Change Photo</button>
                                     <button type="submit" class="btn btn-primary btn-sm ms-2">Save Photo</button>
                                 </form>
                             </div>
                             <div class="section-summary text-start mt-4">
                                 <strong>{{ user.name }}</strong>
                                 <p class="mb-1 text-muted">{{ user.email }}</p>
-                                {% if user.phone %}<p class="mb-1"><strong>Phone:</strong> {{ user.phone }}</p>{% endif %}
-                                {% if profile and profile.course %}<p class="mb-1"><strong>Program:</strong> {{ profile.course }}</p>{% endif %}
-                                {% if profile and profile.faculty %}<p class="mb-0"><strong>Faculty:</strong> {{ profile.faculty }}</p>{% endif %}
+                                {% if user.phone %}<p class="mb-1"><strong>Phone:</strong> {{ user.phone }}</p>{% endif
+                                %}
+                                {% if profile and profile.course %}<p class="mb-1"><strong>Program:</strong> {{
+                                    profile.course }}</p>{% endif %}
+                                {% if profile and profile.faculty %}<p class="mb-0"><strong>Faculty:</strong> {{
+                                    profile.faculty }}</p>{% endif %}
                             </div>
                         </div>
                         <div class="col-md-8">
@@ -65,33 +155,59 @@
                                 <div class="row g-3">
                                     <div class="col-md-6">
                                         <label class="form-label">Program / Course</label>
-                                        <input type="text" name="course" id="courseInput" class="form-control" value="{{ profile.course or '' }}" placeholder="e.g., Software Engineering">
+                                        <input type="text" name="course" id="courseInput" class="form-control"
+                                            value="{{ profile.course or '' }}" placeholder="e.g., Software Engineering">
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label">Faculty</label>
-                                        <input type="text" name="faculty" id="facultyInput" class="form-control" value="{{ profile.faculty or '' }}" placeholder="e.g., Faculty of ICT">
+                                        <input type="text" name="faculty" id="facultyInput" class="form-control"
+                                            value="{{ profile.faculty or '' }}" placeholder="e.g., Faculty of ICT">
                                     </div>
                                     <div class="col-md-12">
                                         <label class="form-label">Skills</label>
-                                        <input type="text" name="skills" class="form-control" value="{{ profile.skills or '' }}" placeholder="e.g., Python, Data Analysis, Creative Design">
-                                        <div class="form-text">Comma-separated skills help recruiters find the right matches fast.</div>
+                                        <label class="form-label">Skills (Select up to 10)</label>
+                                        <select name="skills" id="skillsSelect" class="form-select" multiple size="8">
+                                            {% set user_skills = profile.skills.split(',') if profile.skills else [] %}
+                                            {% for skill in ['Python', 'JavaScript', 'Java', 'C++', 'HTML/CSS', 'React',
+                                            'Node.js', 'SQL', 'MongoDB', 'Data Analysis', 'Machine Learning', 'Project
+                                            Management', 'Communication', 'Leadership', 'Teamwork', 'Problem Solving',
+                                            'Graphic Design', 'UI/UX', 'Digital Marketing', 'SEO', 'Content Writing',
+                                            'Accounting', 'Customer Service', 'Sales', 'Research'] %}
+                                            <option value="{{ skill }}" {% if skill in user_skills %}selected{% endif
+                                                %}>{{ skill }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <div class="form-text">Hold Ctrl (or Cmd on Mac) to select multiple skills.
+                                            These help match you with jobs.</div>
+                                        <div class="form-text">Comma-separated skills help recruiters find the right
+                                            matches fast.</div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label">Internship / Employment Status</label>
                                         <select name="internship_status" class="form-select">
-                                            <option value="Seeking Internship" {% if profile.internship_status == 'Seeking Internship' %}selected{% endif %}>Seeking Internship</option>
-                                            <option value="Currently Interning" {% if profile.internship_status == 'Currently Interning' %}selected{% endif %}>Currently Interning</option>
-                                            <option value="Completed Internship" {% if profile.internship_status == 'Completed Internship' %}selected{% endif %}>Completed Internship</option>
-                                            <option value="Employed" {% if profile.internship_status == 'Employed' %}selected{% endif %}>Employed</option>
-                                            <option value="Not Seeking" {% if profile.internship_status == 'Not Seeking' %}selected{% endif %}>Not Seeking</option>
+                                            <option value="Seeking Internship" {% if
+                                                profile.internship_status=='Seeking Internship' %}selected{% endif %}>
+                                                Seeking Internship</option>
+                                            <option value="Currently Interning" {% if
+                                                profile.internship_status=='Currently Interning' %}selected{% endif %}>
+                                                Currently Interning</option>
+                                            <option value="Completed Internship" {% if
+                                                profile.internship_status=='Completed Internship' %}selected{% endif %}>
+                                                Completed Internship</option>
+                                            <option value="Employed" {% if profile.internship_status=='Employed'
+                                                %}selected{% endif %}>Employed</option>
+                                            <option value="Not Seeking" {% if profile.internship_status=='Not Seeking'
+                                                %}selected{% endif %}>Not Seeking</option>
                                         </select>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label">Phone Number</label>
-                                        <input type="tel" name="phone" class="form-control" value="{{ user.phone or '' }}" placeholder="+266 5XX XXX XXX">
+                                        <input type="tel" name="phone" class="form-control"
+                                            value="{{ user.phone or '' }}" placeholder="+266 5XX XXX XXX">
                                     </div>
                                     <div class="col-12 text-end">
-                                        <button type="submit" class="btn btn-save btn-lg"><i class="fas fa-save me-2"></i> Save Profile</button>
+                                        <button type="submit" class="btn btn-save btn-lg"><i
+                                                class="fas fa-save me-2"></i> Save Profile</button>
                                     </div>
                                 </div>
                             </form>
@@ -101,42 +217,51 @@
                     <div class="accordion mt-4" id="profileAccordion">
                         <div class="accordion-item">
                             <h2 class="accordion-header" id="headingPortal">
-                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#portalImport" aria-expanded="false" aria-controls="portalImport">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                                    data-bs-target="#portalImport" aria-expanded="false" aria-controls="portalImport">
                                     <i class="fas fa-cloud-download-alt me-2"></i> Import from Student Portal
                                 </button>
                             </h2>
-                            <div id="portalImport" class="accordion-collapse collapse" aria-labelledby="headingPortal" data-bs-parent="#profileAccordion">
+                            <div id="portalImport" class="accordion-collapse collapse" aria-labelledby="headingPortal"
+                                data-bs-parent="#profileAccordion">
                                 <div class="accordion-body">
-                                    <p class="text-muted">Securely import your academic profile using your institution portal credentials. This can auto-fill course, faculty, GPA, and graduation year.</p>
+                                    <p class="text-muted">Securely import your academic profile using your institution
+                                        portal credentials. This can auto-fill course, faculty, GPA, and graduation
+                                        year.</p>
                                     <form id="portalForm" onsubmit="event.preventDefault(); importStudentPortalData();">
                                         <div class="row g-3">
                                             <div class="col-md-5">
                                                 <label class="form-label">Student Portal URL</label>
-                                                <input type="url" id="portalUrl" class="form-control" placeholder="https://portal.co.ls" required>
+                                                <input type="url" id="portalUrl" class="form-control"
+                                                    placeholder="https://portal.co.ls" required>
                                             </div>
                                             <div class="col-md-3">
                                                 <label class="form-label">Student ID</label>
-                                                <input type="text" id="portalStudentId" class="form-control" value="{{ user.student_id or '' }}" required>
+                                                <input type="text" id="portalStudentId" class="form-control"
+                                                    value="{{ user.student_id or '' }}" required>
                                             </div>
                                             <div class="col-md-4">
                                                 <label class="form-label">Portal Password</label>
-                                                <input type="password" id="portalPassword" class="form-control" placeholder="••••••••" required>
+                                                <input type="password" id="portalPassword" class="form-control"
+                                                    placeholder="••••••••" required>
                                             </div>
                                         </div>
                                         <div class="mt-3 text-end">
-                                            <button type="submit" class="btn btn-outline-primary"><i class="fas fa-download me-1"></i> Import My Data</button>
+                                            <button type="submit" class="btn btn-outline-primary"><i
+                                                    class="fas fa-download me-1"></i> Import My Data</button>
                                         </div>
                                     </form>
                                     <div class="section-summary mt-4">
                                         <h6>Recent Imports</h6>
                                         {% if import_history %}
-                                            <ul class="mb-0">
-                                                {% for item in import_history %}
-                                                    <li class="small">{{ item.created_at }} · {{ item.student_id }} · {{ item.status }}</li>
-                                                {% endfor %}
-                                            </ul>
+                                        <ul class="mb-0">
+                                            {% for item in import_history %}
+                                            <li class="small">{{ item.created_at }} · {{ item.student_id }} · {{
+                                                item.status }}</li>
+                                            {% endfor %}
+                                        </ul>
                                         {% else %}
-                                            <p class="text-muted mb-0">No portal import has been performed yet.</p>
+                                        <p class="text-muted mb-0">No portal import has been performed yet.</p>
                                         {% endif %}
                                     </div>
                                 </div>
@@ -145,20 +270,24 @@
 
                         <div class="accordion-item">
                             <h2 class="accordion-header" id="headingCourses">
-                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#coursePlanner" aria-expanded="false" aria-controls="coursePlanner">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                                    data-bs-target="#coursePlanner" aria-expanded="false" aria-controls="coursePlanner">
                                     <i class="fas fa-list-alt me-2"></i> Course Planner & Semester Progress
                                 </button>
                             </h2>
-                            <div id="coursePlanner" class="accordion-collapse collapse" aria-labelledby="headingCourses" data-bs-parent="#profileAccordion">
+                            <div id="coursePlanner" class="accordion-collapse collapse" aria-labelledby="headingCourses"
+                                data-bs-parent="#profileAccordion">
                                 <div class="accordion-body">
                                     <div class="row g-3 align-items-end">
                                         <div class="col-md-6">
                                             <label class="form-label">Program Template</label>
-                                            <select id="programSelect" class="form-select" onchange="onProgramChanged()"></select>
+                                            <select id="programSelect" class="form-select"
+                                                onchange="onProgramChanged()"></select>
                                         </div>
                                         <div class="col-md-4">
                                             <label class="form-label">Semester</label>
-                                            <select id="semesterSelect" class="form-select" onchange="onSemesterChanged()">
+                                            <select id="semesterSelect" class="form-select"
+                                                onchange="onSemesterChanged()">
                                                 <option value="1">Semester 1</option>
                                                 <option value="2">Semester 2</option>
                                                 <option value="3">Semester 3</option>
@@ -168,18 +297,20 @@
                                             </select>
                                         </div>
                                         <div class="col-md-2 text-end">
-                                            <button type="button" class="btn btn-outline-success w-100" onclick="saveCourseSelection()">Save</button>
+                                            <button type="button" class="btn btn-outline-success w-100"
+                                                onclick="saveCourseSelection()">Save</button>
                                         </div>
                                     </div>
                                     <div class="course-checkbox-list mt-3" id="courseCheckboxList">
-                                        <div class="text-muted">Choose a program and semester to load recommended course modules.</div>
+                                        <div class="text-muted">Choose a program and semester to load recommended course
+                                            modules.</div>
                                     </div>
                                     <div class="section-summary mt-3">
                                         <h6>Saved semester courses</h6>
                                         {% if selected_courses %}
-                                            <div class="small text-muted">{{ selected_courses|join(', ') }}</div>
+                                        <div class="small text-muted">{{ selected_courses|join(', ') }}</div>
                                         {% else %}
-                                            <div class="small text-muted">No semester courses saved yet.</div>
+                                        <div class="small text-muted">No semester courses saved yet.</div>
                                         {% endif %}
                                     </div>
                                 </div>
@@ -188,57 +319,73 @@
 
                         <div class="accordion-item">
                             <h2 class="accordion-header" id="headingDocs">
-                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#documentUpload" aria-expanded="false" aria-controls="documentUpload">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                                    data-bs-target="#documentUpload" aria-expanded="false"
+                                    aria-controls="documentUpload">
                                     <i class="fas fa-file-alt me-2"></i> Verification Documents & CV
                                 </button>
                             </h2>
-                            <div id="documentUpload" class="accordion-collapse collapse" aria-labelledby="headingDocs" data-bs-parent="#profileAccordion">
+                            <div id="documentUpload" class="accordion-collapse collapse" aria-labelledby="headingDocs"
+                                data-bs-parent="#profileAccordion">
                                 <div class="accordion-body">
                                     <div class="row g-3">
                                         <div class="col-md-6">
                                             <div class="card border-info p-3 h-100">
                                                 <h6 class="mb-3">Submit Results for Review</h6>
-                                                <form id="resultsForm" enctype="multipart/form-data" onsubmit="event.preventDefault(); submitResultsForVerification();">
+                                                <form id="resultsForm" enctype="multipart/form-data"
+                                                    onsubmit="event.preventDefault(); submitResultsForVerification();">
                                                     <div class="mb-3">
                                                         <label class="form-label">Result Type</label>
                                                         <select name="result_type" class="form-select" required>
                                                             <option value="">Select result type</option>
                                                             <option value="Grade 11">Grade 11</option>
                                                             <option value="Grade 12">Grade 12</option>
-                                                            <option value="University Transcript">University Transcript</option>
+                                                            <option value="University Transcript">University Transcript
+                                                            </option>
                                                             <option value="Certificate">Certificate</option>
                                                             <option value="Other">Other</option>
                                                         </select>
                                                     </div>
                                                     <div class="mb-3">
                                                         <label class="form-label">Results Details</label>
-                                                        <textarea class="form-control" name="results_text" rows="3" placeholder="Enter grades, GPA or transcript notes"></textarea>
+                                                        <textarea class="form-control" name="results_text" rows="3"
+                                                            placeholder="Enter grades, GPA or transcript notes"></textarea>
                                                     </div>
                                                     <div class="mb-3">
                                                         <label class="form-label">Upload File</label>
-                                                        <input type="file" class="form-control" name="results_file" accept=".pdf,.doc,.docx">
+                                                        <input type="file" class="form-control" name="results_file"
+                                                            accept=".pdf,.doc,.docx">
                                                     </div>
-                                                    <button type="submit" class="btn btn-outline-info w-100"><i class="fas fa-upload me-1"></i> Submit for Verification</button>
+                                                    <button type="submit" class="btn btn-outline-info w-100"><i
+                                                            class="fas fa-upload me-1"></i> Submit for
+                                                        Verification</button>
                                                 </form>
                                             </div>
                                         </div>
                                         <div class="col-md-6">
                                             <div class="card border-secondary p-3 h-100">
                                                 <h6 class="mb-3">Upload CV</h6>
-                                                <form method="POST" action="{{ url_for('upload_cv') }}" enctype="multipart/form-data">
+                                                <form method="POST" action="{{ url_for('upload_cv') }}"
+                                                    enctype="multipart/form-data">
                                                     <div class="mb-3">
                                                         <label class="form-label">CV File</label>
-                                                        <input type="file" name="cv" class="form-control" accept=".pdf,.doc,.docx" required>
+                                                        <input type="file" name="cv" class="form-control"
+                                                            accept=".pdf,.doc,.docx" required>
                                                     </div>
                                                     {% if profile and profile.cv_filename %}
-                                                        <p class="mb-2 small"><i class="fas fa-file-pdf text-danger me-1"></i><a href="{{ url_for('static', filename='uploads/cv/' + profile.cv_filename) }}" target="_blank">Current CV</a></p>
+                                                    <p class="mb-2 small"><i
+                                                            class="fas fa-file-pdf text-danger me-1"></i><a
+                                                            href="{{ url_for('static', filename='uploads/cv/' + profile.cv_filename) }}"
+                                                            target="_blank">Current CV</a></p>
                                                     {% endif %}
-                                                    <button type="submit" class="btn btn-outline-secondary w-100"><i class="fas fa-file-upload me-1"></i> Upload CV</button>
+                                                    <button type="submit" class="btn btn-outline-secondary w-100"><i
+                                                            class="fas fa-file-upload me-1"></i> Upload CV</button>
                                                 </form>
                                             </div>
                                         </div>
                                     </div>
-                                    <div id="verificationStatus" class="alert alert-info small mt-3" style="display: none;"></div>
+                                    <div id="verificationStatus" class="alert alert-info small mt-3"
+                                        style="display: none;"></div>
                                 </div>
                             </div>
                         </div>
@@ -339,17 +486,17 @@
             method: 'POST',
             body: formData
         })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                alert(`Saved ${data.selected_count} courses for ${selectedProgram}, semester ${selectedSemester}.`);
-            } else {
-                alert(data.error || 'Unable to save course selection.');
-            }
-        })
-        .catch(() => {
-            alert('Could not save course selection. Please try again later.');
-        });
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`Saved ${data.selected_count} courses for ${selectedProgram}, semester ${selectedSemester}.`);
+                } else {
+                    alert(data.error || 'Unable to save course selection.');
+                }
+            })
+            .catch(() => {
+                alert('Could not save course selection. Please try again later.');
+            });
     }
 
     function importStudentPortalData() {
@@ -371,21 +518,21 @@
             method: 'POST',
             body: formData
         })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                alert(data.message || 'Data imported successfully.');
-                if (data.student_data) {
-                    document.getElementById('courseInput').value = data.student_data.course || document.getElementById('courseInput').value;
-                    document.getElementById('facultyInput').value = data.student_data.faculty || document.getElementById('facultyInput').value;
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert(data.message || 'Data imported successfully.');
+                    if (data.student_data) {
+                        document.getElementById('courseInput').value = data.student_data.course || document.getElementById('courseInput').value;
+                        document.getElementById('facultyInput').value = data.student_data.faculty || document.getElementById('facultyInput').value;
+                    }
+                } else {
+                    alert(data.error || 'Failed to import portal data.');
                 }
-            } else {
-                alert(data.error || 'Failed to import portal data.');
-            }
-        })
-        .catch(() => {
-            alert('Unable to reach the portal import service. Please try again later.');
-        });
+            })
+            .catch(() => {
+                alert('Unable to reach the portal import service. Please try again later.');
+            });
     }
 
     function submitResultsForVerification() {
@@ -401,28 +548,28 @@
             method: 'POST',
             body: formData
         })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                alert('? ' + data.message);
-                form.reset();
-            } else {
-                alert('? ' + (data.error || 'Error submitting results.'));
-            }
-        })
-        .catch(() => {
-            alert('Could not submit verification request.');
-        });
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert('? ' + data.message);
+                    form.reset();
+                } else {
+                    alert('? ' + (data.error || 'Error submitting results.'));
+                }
+            })
+            .catch(() => {
+                alert('Could not submit verification request.');
+            });
     }
 
-    document.getElementById('profilePicInput').addEventListener('change', function(e) {
+    document.getElementById('profilePicInput').addEventListener('change', function (e) {
         if (e.target.files && e.target.files[0]) {
             const reader = new FileReader();
-            reader.onload = function(event) { document.getElementById('profilePreview').src = event.target.result; };
+            reader.onload = function (event) { document.getElementById('profilePreview').src = event.target.result; };
             reader.readAsDataURL(e.target.files[0]);
         }
     });
 
     fetchProgramCatalog();
 </script>
-{% endblock %}
+{% endblock %}

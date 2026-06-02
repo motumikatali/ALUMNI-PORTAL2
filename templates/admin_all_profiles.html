@@ -1,0 +1,381 @@
+{% extends "base.html" %}
+
+{% block title %}All Profiles - Admin{% endblock %}
+
+{% block extra_css %}
+<style>
+    .profile-table {
+        width: 100%;
+        margin-bottom: 0;
+    }
+    .profile-table th {
+        background-color: #f8f9fa;
+        border-bottom: 2px solid #dee2e6;
+        font-weight: 600;
+        color: #495057;
+        padding: 0.75rem;
+    }
+    .profile-table td {
+        vertical-align: middle;
+        padding: 0.75rem;
+    }
+    .profile-table tr:hover {
+        background-color: rgba(108, 117, 125, 0.05);
+    }
+    .action-buttons {
+        display: flex;
+        gap: 0.25rem;
+        flex-wrap: wrap;
+    }
+    .action-buttons .btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.75rem;
+    }
+    .nav-tabs .nav-link {
+        color: #495057;
+        border: none;
+        border-bottom: 3px solid transparent;
+    }
+    .nav-tabs .nav-link.active {
+        background-color: transparent;
+        color: #0d6efd;
+        border-bottom-color: #0d6efd;
+    }
+    .tab-content {
+        background-color: #fff;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        border: 1px solid #dee2e6;
+        border-top: none;
+    }
+    .badge-verified {
+        background-color: #28a745;
+    }
+    .badge-unverified {
+        background-color: #ffc107;
+        color: #212529;
+    }
+    .profile-card {
+        background: white;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .profile-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        margin-bottom: 0.5rem;
+    }
+    .profile-name {
+        font-weight: 600;
+        color: #212529;
+    }
+    .profile-info {
+        color: #6c757d;
+        font-size: 0.9rem;
+    }
+    .search-box {
+        margin-bottom: 1.5rem;
+    }
+    @media (max-width: 768px) {
+        .action-buttons {
+            flex-direction: column;
+        }
+        .profile-table {
+            font-size: 0.85rem;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="mb-4">
+                <i class="fas fa-users me-2 text-primary"></i> All User Profiles
+            </h2>
+        </div>
+    </div>
+
+    <!-- Alert messages -->
+    {% if get_flashed_messages(category_filter=['success']) %}
+        {% for message in get_flashed_messages(category_filter=['success']) %}
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            <i class="fas fa-check-circle me-2"></i> {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+    {% endif %}
+
+    <!-- Tabs Navigation -->
+    <ul class="nav nav-tabs mb-4" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="students-tab" data-bs-toggle="tab" data-bs-target="#students" type="button" role="tab">
+                <i class="fas fa-graduation-cap me-2"></i> Students & Alumni ({{ students|length }})
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="recruiters-tab" data-bs-toggle="tab" data-bs-target="#recruiters" type="button" role="tab">
+                <i class="fas fa-briefcase me-2"></i> Recruiters ({{ recruiters|length }})
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="admins-tab" data-bs-toggle="tab" data-bs-target="#admins" type="button" role="tab">
+                <i class="fas fa-shield-alt me-2"></i> Admins ({{ admins|length }})
+            </button>
+        </li>
+    </ul>
+
+    <!-- Tab Content -->
+    <div class="tab-content">
+
+        <!-- STUDENTS TAB -->
+        <div class="tab-pane fade show active" id="students" role="tabpanel">
+            <div class="search-box">
+                <input type="text" class="form-control" id="studentSearch" placeholder="Search by name, email, course, or faculty...">
+            </div>
+
+            {% if students|length > 0 %}
+                <div class="table-responsive">
+                    <table class="table profile-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Role</th>
+                                <th>Course / Faculty</th>
+                                <th>GPA</th>
+                                <th>Joined</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="studentTableBody">
+                            {% for student in students %}
+                            <tr class="student-row" data-name="{{ student.name|lower }}" data-email="{{ student.email|lower }}" data-course="{{ (student.course or '')|lower }}" data-faculty="{{ (student.faculty or '')|lower }}">
+                                <td>
+                                    <div class="fw-semibold">{{ student.name }}</div>
+                                </td>
+                                <td>{{ student.email }}</td>
+                                <td>
+                                    <span class="badge bg-info">{{ student.role }}</span>
+                                </td>
+                                <td>
+                                    <small>
+                                        {{ student.course or '-' }}<br>
+                                        {% if student.faculty %}<span class="text-muted">{{ student.faculty }}</span>{% endif %}
+                                    </small>
+                                </td>
+                                <td>{{ student.gpa or '-' }}</td>
+                                <td>
+                                    <small class="text-muted">{{ student.created_at[:10] if student.created_at else '-' }}</small>
+                                </td>
+                                <td>
+                                    <div class="action-buttons">
+                                        <a href="{{ url_for('admin_view_user', user_id=student.id) }}" class="btn btn-sm btn-outline-primary" title="View Profile">
+                                            <i class="fas fa-eye"></i> View
+                                        </a>
+                                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDelete('{{ student.id }}', '{{ student.name }}', 'student')" title="Delete Profile">
+                                            <i class="fas fa-trash"></i> Delete
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-info text-center py-4">
+                    <i class="fas fa-info-circle me-2"></i> No students or alumni found.
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- RECRUITERS TAB -->
+        <div class="tab-pane fade" id="recruiters" role="tabpanel">
+            <div class="search-box">
+                <input type="text" class="form-control" id="recruiterSearch" placeholder="Search by name, email, or company...">
+            </div>
+
+            {% if recruiters|length > 0 %}
+                <div class="table-responsive">
+                    <table class="table profile-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Company</th>
+                                <th>Industry</th>
+                                <th>Location</th>
+                                <th>Status</th>
+                                <th>Joined</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recruiterTableBody">
+                            {% for recruiter in recruiters %}
+                            <tr class="recruiter-row" data-name="{{ recruiter.name|lower }}" data-email="{{ recruiter.email|lower }}" data-company="{{ (recruiter.company_name or '')|lower }}">
+                                <td>
+                                    <div class="fw-semibold">{{ recruiter.name }}</div>
+                                </td>
+                                <td>{{ recruiter.email }}</td>
+                                <td>{{ recruiter.company_name or '-' }}</td>
+                                <td>{{ recruiter.industry or '-' }}</td>
+                                <td>{{ recruiter.location or '-' }}</td>
+                                <td>
+                                    {% if recruiter.verified %}
+                                        <span class="badge badge-verified">Verified</span>
+                                    {% else %}
+                                        <span class="badge badge-unverified">Not Verified</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <small class="text-muted">{{ recruiter.created_at[:10] if recruiter.created_at else '-' }}</small>
+                                </td>
+                                <td>
+                                    <div class="action-buttons">
+                                        <a href="{{ url_for('admin_view_user', user_id=recruiter.id) }}" class="btn btn-sm btn-outline-primary" title="View Profile">
+                                            <i class="fas fa-eye"></i> View
+                                        </a>
+                                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDelete('{{ recruiter.id }}', '{{ recruiter.name }}', 'recruiter')" title="Delete Profile">
+                                            <i class="fas fa-trash"></i> Delete
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-info text-center py-4">
+                    <i class="fas fa-info-circle me-2"></i> No recruiters found.
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- ADMINS TAB -->
+        <div class="tab-pane fade" id="admins" role="tabpanel">
+            <div class="search-box">
+                <input type="text" class="form-control" id="adminSearch" placeholder="Search by name or email...">
+            </div>
+
+            {% if admins|length > 0 %}
+                <div class="table-responsive">
+                    <table class="table profile-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Phone</th>
+                                <th>Joined</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminTableBody">
+                            {% for admin in admins %}
+                            <tr class="admin-row" data-name="{{ admin.name|lower }}" data-email="{{ admin.email|lower }}">
+                                <td>
+                                    <div class="fw-semibold">{{ admin.name }}</div>
+                                </td>
+                                <td>{{ admin.email }}</td>
+                                <td>{{ admin.phone or '-' }}</td>
+                                <td>
+                                    <small class="text-muted">{{ admin.created_at[:10] if admin.created_at else '-' }}</small>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-info text-center py-4">
+                    <i class="fas fa-info-circle me-2"></i> No admins found.
+                </div>
+            {% endif %}
+        </div>
+
+    </div>
+
+</div>
+
+<!-- Confirmation Modal -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">
+                    <i class="fas fa-exclamation-triangle me-2"></i> Confirm Deletion
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p id="deleteMessage"></p>
+                <div class="alert alert-warning" role="alert">
+                    <i class="fas fa-warning me-2"></i>
+                    <strong>Warning:</strong> This action cannot be undone. All related data will be permanently deleted.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteForm" method="POST" style="display:inline;">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="fas fa-trash me-2"></i> Delete Permanently
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Search functionality
+document.getElementById('studentSearch').addEventListener('keyup', function() {
+    const searchTerm = this.value.toLowerCase();
+    document.querySelectorAll('#studentTableBody tr').forEach(row => {
+        const name = row.dataset.name;
+        const email = row.dataset.email;
+        const course = row.dataset.course;
+        const faculty = row.dataset.faculty;
+        const match = name.includes(searchTerm) || email.includes(searchTerm) || 
+                     course.includes(searchTerm) || faculty.includes(searchTerm);
+        row.style.display = match ? '' : 'none';
+    });
+});
+
+document.getElementById('recruiterSearch').addEventListener('keyup', function() {
+    const searchTerm = this.value.toLowerCase();
+    document.querySelectorAll('#recruiterTableBody tr').forEach(row => {
+        const name = row.dataset.name;
+        const email = row.dataset.email;
+        const company = row.dataset.company;
+        const match = name.includes(searchTerm) || email.includes(searchTerm) || company.includes(searchTerm);
+        row.style.display = match ? '' : 'none';
+    });
+});
+
+document.getElementById('adminSearch').addEventListener('keyup', function() {
+    const searchTerm = this.value.toLowerCase();
+    document.querySelectorAll('#adminTableBody tr').forEach(row => {
+        const name = row.dataset.name;
+        const email = row.dataset.email;
+        const match = name.includes(searchTerm) || email.includes(searchTerm);
+        row.style.display = match ? '' : 'none';
+    });
+});
+
+// Delete confirmation
+function confirmDelete(userId, userName, userType) {
+    const message = `Are you sure you want to delete the ${userType} profile of <strong>${userName}</strong>? All associated data will be permanently removed.`;
+    document.getElementById('deleteMessage').innerHTML = message;
+    
+    const form = document.getElementById('deleteForm');
+    form.action = `{{ url_for('admin_delete_profile', user_id=0) }}`.replace('0', userId);
+    
+    const modal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
+    modal.show();
+}
+</script>
+{% endblock %}

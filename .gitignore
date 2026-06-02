@@ -1,0 +1,30 @@
+# Database files
+database.db
+database.db-shm
+database.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# Environment variables
+.env
+
+# Uploads
+static/uploads/
+
+# Ngrok
+ngrok.exe
+ngrok.yml
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+
+{% block title %}{{ job.title }} - Job Details{% endblock %}
+
+{% block extra_css %}
+<style>
+    .job-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+    }
+
+    .job-header h1 {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .job-meta {
+        display: flex;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+        margin-top: 1rem;
+        font-size: 0.95rem;
+    }
+
+    .job-meta-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .job-body {
+        background: white;
+        padding: 2rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+    }
+
+    .job-section {
+        margin-bottom: 2rem;
+    }
+
+    .job-section h3 {
+        font-size: 1.25rem;
+        margin-bottom: 1rem;
+        color: #2d3748;
+        border-bottom: 2px solid #e2e8f0;
+        padding-bottom: 0.5rem;
+    }
+
+    .job-description {
+        line-height: 1.6;
+        color: #4a5568;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .badge-external {
+        display: inline-block;
+        background: #fee2e2;
+        color: #991b1b;
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        margin-top: 1rem;
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-top: 2rem;
+    }
+
+    .action-buttons .btn {
+        flex: 1;
+        min-width: 150px;
+        padding: 0.75rem 1.5rem;
+    }
+
+    .alert-external {
+        background: #fef3c7;
+        border: 1px solid #fcd34d;
+        color: #92400e;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
+    }
+
+    .job-info-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .info-box {
+        background: #f7fafc;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #667eea;
+    }
+
+    .info-label {
+        font-size: 0.875rem;
+        color: #718096;
+        text-transform: uppercase;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+    }
+
+    .info-value {
+        font-size: 1.125rem;
+        color: #2d3748;
+        font-weight: 500;
+    }
+
+    .source-badge {
+        display: inline-block;
+        background: #dbeafe;
+        color: #1e40af;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-size: 0.875rem;
+    }
+
+    @media (max-width: 768px) {
+        .job-header {
+            padding: 1.5rem;
+        }
+
+        .job-header h1 {
+            font-size: 1.5rem;
+        }
+
+        .action-buttons {
+            flex-direction: column;
+        }
+
+        .action-buttons .btn {
+            width: 100%;
+        }
+
+        .job-meta {
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="job-header">
+        <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+            <div>
+                <h1>{{ job.title }}</h1>
+                <div class="job-meta">
+                    <div class="job-meta-item">
+                        <i class="fas fa-building"></i>
+                        <span>{{ job.company or 'Unknown Company' }}</span>
+                    </div>
+                    <div class="job-meta-item">
+                        <i class="fas fa-map-marker-alt"></i>
+                        <span>{{ job.location or 'Location not specified' }}</span>
+                    </div>
+                    {% if job.salary %}
+                    <div class="job-meta-item">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>{{ job.salary }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            <span class="source-badge">
+                <i class="fas fa-globe me-1"></i> External Job
+            </span>
+        </div>
+    </div>
+
+    <div class="alert-external">
+        <i class="fas fa-info-circle me-2"></i>
+        <strong>Note:</strong> This is an external job posting. When you click "Apply Now", you will be taken to the original job listing where you can submit your application directly.
+    </div>
+
+    <div class="job-body">
+        <!-- Job Info Grid -->
+        {% if job.job_type or job.posted_date %}
+        <div class="job-info-grid">
+            {% if job.job_type %}
+            <div class="info-box">
+                <div class="info-label">Job Type</div>
+                <div class="info-value">{{ job.job_type }}</div>
+            </div>
+            {% endif %}
+            {% if job.posted_date %}
+            <div class="info-box">
+                <div class="info-label">Posted Date</div>
+                <div class="info-value">{{ job.posted_date[:10] if job.posted_date else 'Not specified' }}</div>
+            </div>
+            {% endif %}
+            {% if job.salary %}
+            <div class="info-box">
+                <div class="info-label">Salary Range</div>
+                <div class="info-value">{{ job.salary }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Job Description -->
+        {% if job.description %}
+        <div class="job-section">
+            <h3><i class="fas fa-align-left me-2"></i> Job Description</h3>
+            <div class="job-description">{{ job.description }}</div>
+        </div>
+        {% endif %}
+
+        <!-- Source Information -->
+        <div class="job-section">
+            <h3><i class="fas fa-link me-2"></i> Source</h3>
+            <p class="text-muted mb-2">This job was found from an external source:</p>
+            <div class="bg-light p-3 rounded">
+                <small class="text-break">
+                    <i class="fas fa-external-link-alt me-1"></i>
+                    <a href="{{ job.source_url }}" target="_blank" rel="noopener noreferrer" class="text-decoration-none">
+                        {{ job.source_url[:80] }}{% if job.source_url|length > 80 %}...{% endif %}
+                    </a>
+                </small>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="action-buttons">
+            <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left me-1"></i> Back to Dashboard
+            </a>
+            <form method="POST" action="{{ url_for('apply_scraped_job', scraped_job_id=job.id) }}" style="flex: 1;">
+                <button type="submit" class="btn btn-primary w-100" {% if already_interested %}disabled title="You have already shown interest in this job"{% endif %}>
+                    <i class="fas fa-briefcase me-1"></i> 
+                    {% if already_interested %}
+                        Already Interested
+                    {% else %}
+                        Apply Now
+                    {% endif %}
+                </button>
+            </form>
+        </div>
+
+        {% if already_interested %}
+        <div class="alert alert-info mt-3">
+            <i class="fas fa-check-circle me-2"></i>
+            <strong>Interest Recorded:</strong> You have already shown interest in this job. When you click "Apply Now" again, you can proceed to the job application on the external site.
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Related Jobs Section -->
+    <div class="mt-4 pt-4 border-top">
+        <h3 class="mb-3"><i class="fas fa-briefcase me-2"></i> Browse More Opportunities</h3>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <a href="{{ url_for('jobs_list') }}" class="btn btn-outline-primary btn-lg w-100">
+                    <i class="fas fa-briefcase me-1"></i> View Internal Jobs
+                </a>
+            </div>
+            <div class="col-md-6">
+                <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary btn-lg w-100">
+                    <i class="fas fa-chart-line me-1"></i> View Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
